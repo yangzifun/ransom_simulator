@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="RemoteTargetsManager">
+    <targets>
+      <target name="WSL - Ubuntu" type="wsl" uuid="20e836cc-e2e3-47ad-bb98-800a1c8e59da">
+        <config>
+          <option name="distributionMsId" value="Ubuntu" />
+          <option name="projectRootOnTarget" value="{exitCode=0, timeout=false, cancelled=false, stdout=/tmp/tmp.cPUctNs7k1&#13;&#10;, stderr=}/encryptor_extortion.py" />
+        </config>
+        <ContributedStateBase type="GoLanguageRuntime">
+          <config>
+            <option name="goPath" value="/root/go" />
+            <option name="goRoot" value="/usr/bin/go" />
+            <option name="goVersion" value="go1.24.3 linux/amd64" />
+          </config>
+        </ContributedStateBase>
+      </target>
+      <target name="root@192.168.2.200:22" type="ssh/sftp" uuid="fdbaa46e-08e0-4be7-ac5f-46f8a091b4dc">
+        <config>
+          <option name="projectRootOnTarget" value="/root/encryptor_extortion.py" />
+          <option name="serverName" value="root@192.168.2.200:22 password" />
+        </config>
+        <ContributedStateBase type="GoLanguageRuntime">
+          <config />
+        </ContributedStateBase>
+      </target>
+    </targets>
+  </component>
+</project>
