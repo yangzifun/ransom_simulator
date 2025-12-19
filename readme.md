@@ -72,7 +72,7 @@
 
 | **目标平台**              | **命令**                                                     | **输出文件示例**                                         |
 | :------------------------ | :----------------------------------------------------------- | :------------------------------------------------------- |
-| **Linux (64位)**          | GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ransom_simulator_linux main.go<br/>CGO_ENABLED=0 go build -o ransom_simulator_linux_static ransom_simulator.go | ransom_simulator_linux<br/>ransom_simulator_linux_static |
+| **Linux (64位)**          | GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ransom_simulator_linux ransom_simulator.go<br/>CGO_ENABLED=0 go build -o ransom_simulator_linux_static ransom_simulator.go | ransom_simulator_linux<br/>ransom_simulator_linux_static |
 | **Windows (64位)**        | GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ransom_simulator.exe ransom_simulator.go | ransom_simulator.exe                                     |
 | **macOS (Intel)**         | GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o ransom_simulator_macos_intel ransom_simulator.go | ransom_simulator_macos_intel                             |
 | **macOS (Apple Silicon)** | GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o ransom_simulator_macos_arm ransom_simulator.go | ransom_simulator_macos_arm                               |
