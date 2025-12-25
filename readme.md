@@ -1,14 +1,11 @@
 # 勒索软件模拟器 (Ransomware Simulator)
 
-[![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://golang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white) ![Version](https://img.shields.io/badge/Version−2.7-blue.svg)
 
 > **安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
 
 ## 项目概述
 这是一个用于红队演练和防御研究的勒索软件模拟器，模拟真实勒索软件的行为模式，包括文件加密、勒索信生成、C2通信等关键攻击链环节。项目遵循MIT许可证，旨在帮助安全团队测试防御方案和进行安全意识培训。
-
-**当前版本**: v2.7-Beta
 
 ## 主要功能
 - 🔒 **文件加密系统**
@@ -176,8 +173,6 @@ ransom_simulator.exe [参数]
    - 模拟清除系统日志和安全日志
    - 实际实现为占位符（需在真实环境中扩展）
 
-### 文件识别
-
 ### 模拟的关键攻击阶段 (MITRE ATT&CK®)
 
 | **Tactic (战术)**              | **ID** | **模拟行为**                                                 |
@@ -188,7 +183,10 @@ ransom_simulator.exe [参数]
 | **发现** (Discovery)           | TA0007 | 扫描文件系统，支持**特定扩展名筛选**或**指定路径的全量扫描**。 |
 | **影响** (Impact)              | TA0040 | **核心载荷**：使用 AES-256 + RSA-2048 混合加密算法对目标文件进行加密。**全覆盖勒索信**：在每个包含加密文件的目录中投放勒索信。 |
 
+### 文件识别
+
 默认加密扩展类型包括：
+
 ```
 文档: .doc, .docx, .pdf, .xls, .xlsx, .ppt, .pptx
 图片: .jpg, .jpeg, .png, .gif, .bmp
