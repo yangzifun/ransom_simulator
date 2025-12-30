@@ -1,220 +1,288 @@
-# 勒索软件模拟器 (Ransomware Simulator)
+- # 勒索软件模拟器 (Ransomware Simulator)
 
-[![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white) ![Version](https://img.shields.io/badge/Version−2.7-blue.svg)
+  [![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white) ![Version](https://img.shields.io/badge/Version−2.9-blue.svg)
 
-> **安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
+  > **安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
 
-## 项目概述
-这是一个用于红队演练和防御研究的勒索软件模拟器，模拟真实勒索软件的行为模式，包括文件加密、勒索信生成、C2通信等关键攻击链环节。项目遵循MIT许可证，旨在帮助安全团队测试防御方案和进行安全意识培训。
-
-## 主要功能
-- 🔒 **文件加密系统**
-  - 使用RSA-2048 + AES-256混合加密
-  - 支持多平台文件操作（Windows/Linux/macOS）
-  - 并发加密处理（多worker支持）
-- 📜 **勒索信生成**
-  - 多语言勒索模板（中/英文）
-  - 桌面勒索信投放
-  - 自定义勒索信内容
-- ⚙️ **攻击链模拟**
-  - 持久化机制（互斥锁）
-  - 防御规避技术（进程终止、日志清除）
-  - C2心跳通信
-- 🛡️ **安全模式**
-  - 演习模式（dry-run）避免实际破坏
-  - 文件操作日志记录
-
-## 技术架构
-```
-├── decryptor.go         # 解密工具
-├── go.mod                # Go模块依赖
-├── go.sum               # Go依赖校验
-├── LICENSE              # MIT许可证
-├── ransom_simulator.go  # 主程序
-├── readme.md            # 项目文档
-└── workers/             # C2服务器组件
-    ├── bad-c2-server.js  # Cloudflare Worker实现的C2服务器
-    └── rsauuid.js    # RSA 密钥接口
-```
-
-## 安装与使用
-
-### 预编译二进制
-从[Releases页面](https://github.com/yangzifun/ransom_simulator/releases)下载对应平台的二进制文件：
-```bash
-# Windows
-ransom_simulator.exe [参数]
-
-# Linux/MacOS
-./ransom_simulator_linux [参数]
-```
-
-### 从源码编译
-
-#### 3.1. 先决条件
-- 安装 **Go 编程语言** (版本 1.18 或更高)。
-
-#### 3.2. 编译步骤
-假设您已将 `main.go` (以及 `decryptor.go`) 文件放置在您的工作目录下。
-
-| **目标平台**              | **命令**                                                     | **输出文件示例**                                         |
-| :------------------------ | :----------------------------------------------------------- | :------------------------------------------------------- |
-| **Linux (64位)**          | GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ransom_simulator_linux ransom_simulator.go<br/>CGO_ENABLED=0 go build -o ransom_simulator_linux_static ransom_simulator.go | ransom_simulator_linux<br/>ransom_simulator_linux_static |
-| **Windows (64位)**        | GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ransom_simulator.exe ransom_simulator.go | ransom_simulator.exe                                     |
-| **macOS (Intel)**         | GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o ransom_simulator_macos_intel ransom_simulator.go | ransom_simulator_macos_intel                             |
-| **macOS (Apple Silicon)** | GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o ransom_simulator_macos_arm ransom_simulator.go | ransom_simulator_macos_arm                               |
-
-> 提示：`-ldflags="-s -w"` 是一个可选参数，用于移除调试信息，减小最终可执行文件的大小。
-
-### 基本使用
-```bash
-# 演习模式（不实际加密文件）
-./ransom_simulator --dry-run
-
-# 指定工作线程数
-./ransom_simulator --workers=8
-
-# 加密特定目录
-./ransom_simulator --dir="/path/to/target"
-
-# 加密后删除原文件（危险！）
-./ransom_simulator --remove
-
-# 只加密特定扩展名文件
-./ransom_simulator --ext=".doc,.pdf"
-```
-
-### 使用示例 (演练指导)
-
-#### 示例 1: 精准打击 - 加密单个重要文件
-目标：测试 DLP 或 EDR 是否能阻止对特定敏感文件（如 passwords.txt）的加密操作。
-
-```bash
-# 直接指定文件路径
-./ransom_simulator_linux -dir /home/admin/secrets/passwords.txt -remove
-```
-效果：程序将忽略扩展名检查，强制加密该文件并在同级目录下生成勒索信。
-
-#### 示例 2: 区域全灭 - 加密指定目录下的所有内容
-目标：模拟针对特定业务目录的毁灭性打击。
-
-```bash
-# 指定业务目录，开启8个线程并发加密
-./ransom_simulator.exe -dir "C:\Users\Admin\Documents\Projects" -workers 8 -remove
-```
-效果：该目录下的所有文件（无论后缀是 .txt 还是 .custom）都将被加密。勒索信将投递到该目录及其所有子目录中。
-
-#### 示例 3: 全盘扫描 - 传统勒索模式
-目标：模拟传统勒索软件，扫描全盘并只加密特定价值的文档。
-
-```bash
-# 不指定 -dir，则自动扫描全盘（或Linux根目录）
-# 此时必须依赖内置的扩展名列表或通过 -ext 指定
-./ransom_simulator_linux -ext .pdf,.docx,.xlsx -dry-run
-```
-
-## 命令行参数详解
-
-| **参数** | **类型** | **状态** | **描述**                                                     | **关键用途**                                     |
-| :------- | :------- | :------- | :----------------------------------------------------------- | :----------------------------------------------- |
-| -dir     | string   | **推荐** | 指定攻击目标。可以是**目录路径**或**单个文件路径**。多个路径用逗号分隔。**注意：使用此参数时，将忽略 -ext 限制，强制加密目标内所有格式文件。** | **精准打击**：定向加密特定文件或目录，便于测试。 |
-| -ext     | string   | 可选     | 指定要加密的文件扩展名（如 .txt,.doc）。**仅在未指定 -dir 时生效**（全盘扫描模式）。 | **范围控制**：在全盘扫描模式下限制文件类型。     |
-| -workers | int      | 可选     | 并发 Worker 线程数量 (默认: CPU核心数)。                     | **性能模拟**：测试系统资源消耗和响应延迟。       |
-| -dry-run | bool     | 可选     | **演习模式**：只查找、列出目标，不进行加密或破坏性操作。     | **安全测试**：初步验证扫描和检测规则。           |
-| -remove  | bool     | 可选     | **[高危]** 加密成功后删除原始文件。                          | **真实模拟**：模拟真实勒索软件的彻底破坏。       |
-
-## 技术细节
-
-### 加密流程
-1. **密钥获取**：
-   - 尝试连接C2服务器获取RSA公钥和UUID（API：`https://rsa-uuid.api.yangzifun.org`）
-   - 失败时使用内置默认密钥（离线模式）
-   
-2. **文件加密**：
-   ```mermaid
-   graph TD
-     A[生成随机AES-256密钥] --> B[使用AES-GCM加密文件内容]
-     B --> C[使用RSA加密AES密钥]
-     C --> D[组合输出：加密密钥+Nonce+密文]
-   ```
-
-3. **输出格式**：
-   - 加密后文件扩展名：`.encrypted`
-   - 文件结构：`[RSA加密的AES密钥(256字节)] + [Nonce(12字节)] + [AES-GCM加密内容]`
-
-### C2通信协议
-1. **心跳机制**：
-   - 定时向C2服务器发送心跳（`https://bad-c2-server.api.yangzifun.org/beacon_check_in`）
-   - 收集客户端信息（IP、User-Agent等）
-   
-2. **C2服务器实现**：
-   - 使用Cloudflare Worker（workers/bad-c2-server.js）
-   - 日志记录所有连接请求
-   - 返回简单的JSON响应
-
-### 互斥锁与持久化
-为了模拟真实恶意软件的单实例特性，程序启动时会在临时目录创建 `.lock` 文件。
-- **改进机制**：在 v2.5 版本中，程序启动的第一步是**强制尝试删除旧的锁文件**。这意味着您在进行反复的自动化测试时，不再需要手动清理环境，程序会自动重置状态。
-- **手动删除**：
-  ```bash
-  # Linux/MacOS
-  rm /tmp/ransom_simulator_instance.lock
   
-  # Windows
-  del %TEMP%\ransom_simulator_instance.lock
+
+  ## 🚀 项目概述
+
+  这是一个用于红队演练和防御研究的勒索软件模拟器，模拟真实勒索软件的行为模式，包括文件加密、勒索信生成、C2通信等关键攻击链环节。项目遵循MIT许可证，旨在帮助安全团队测试防御方案和进行安全意识培训。
+
+  ## ✨ 主要功能
+
+  ### 🔒 核心功能
+  - **文件加密系统**：使用RSA-2048 + AES-256混合加密
+  - **多平台支持**：Windows/Linux/macOS 全平台兼容
+  - **并发加密处理**：多worker线程优化性能
+
+  ### 📜 勒索系统
+  - **多语言勒索信**：中/英文双语勒索模板
+  - **智能投放机制**：每个加密目录自动投放勒索信
+  - **壁纸修改模拟**：尝试修改系统壁纸增加影响
+
+  ### 🛡️ 攻击链模拟
+  - **服务停止攻击**：停止数据库、安全软件服务
+  - **内存清理技术**：清理数据库缓存、系统内存
+  - **进程守护解除**：停止守护进程和定时任务
+  - **数据库攻击**：针对企业数据库的专项攻击
+
+  ### 📊 日志与审计
+  - **详细日志记录**：成功/失败文件分别记录
+  - **操作过程追踪**：完整记录程序执行流程
+  - **日志自动分类**：按程序目录输出日志文件
+
+  ## 🏗️ 技术架构
+
+  ```
+  └── Linux/
+  	├── ransom_simulator_linux.go    # Linux增强版
+  └── Windows/
+  	├── ransom_simulator_windows.go  # Windows版
+  ├── decryptor.go                 # 解密工具
+  ├── go.mod                       # Go模块依赖
+  ├── go.sum                       # Go依赖校验
+  ├── LICENSE                      # MIT许可证
+  ├── readme.md                    # 项目文档
+  └── workers/                     # C2服务器组件
+      ├── bad-c2-server.js         # Cloudflare Worker实现的C2服务器
+      └── rsauuid.js               # RSA 密钥接口
   ```
 
-### 防御规避技术
-1. **进程终止**：
-   - Windows：结束notepad.exe, winword.exe等进程
-   - Linux：结束gedit, vim等进程
-   
-2. **日志清除**：
-   - 模拟清除系统日志和安全日志
-   - 实际实现为占位符（需在真实环境中扩展）
+  ## 🚀 安装与使用
 
-### 模拟的关键攻击阶段 (MITRE ATT&CK®)
+  ### 预编译二进制
 
-| **Tactic (战术)**              | **ID** | **模拟行为**                                                 |
-| :----------------------------- | :----- | :----------------------------------------------------------- |
-| **执行** (Execution)           | TA0002 | 模拟通过社工手段获取执行权限。                               |
-| **防御规避** (Defense Evasion) | TA0005 | 模拟删除卷影副本 (`vssadmin`) 或备份 (`tmutil`) 的行为。     |
-| **命令与控制** (C2)            | TA0011 | 模拟向攻击者控制的服务器发送网络信标（Beacon Check-in）。    |
-| **发现** (Discovery)           | TA0007 | 扫描文件系统，支持**特定扩展名筛选**或**指定路径的全量扫描**。 |
-| **影响** (Impact)              | TA0040 | **核心载荷**：使用 AES-256 + RSA-2048 混合加密算法对目标文件进行加密。**全覆盖勒索信**：在每个包含加密文件的目录中投放勒索信。 |
+  从[Releases页面](https://github.com/yangzifun/ransom_simulator/releases)下载对应平台的二进制文件：
 
-### 文件识别
+  ```bash
+  # Windows
+  ransom_simulator.exe [参数]
+  
+  # Linux增强版
+  ./ransom_simulator_linux_enhanced [参数]
+  ```
 
-默认加密扩展类型包括：
+  ### 从源码编译
 
-```
-文档: .doc, .docx, .pdf, .xls, .xlsx, .ppt, .pptx
-图片: .jpg, .jpeg, .png, .gif, .bmp
-压缩文件: .zip, .rar, .7z, .tar
-数据库: .sql, .db, .mdb
-代码: .go, .json
-```
+  #### 编译步骤
 
-## 解密流程
-1. 访问解密门户：https://encrypt.yangzifun.org/
-2. 输入加密时生成的UUID
-3. 下载解密工具：
-   ```bash
-   # 解密单个文件
-   decryptor -key=UUID -file=加密文件.encrypted
-   
-   # 批量解密目录
-   decryptor -key=UUID -dir=加密文件目录
-   ```
+  | **目标平台**            | **命令**                                                     | **输出文件**                                                 |
+  | ----------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+  | **Linux增强版（64位）** | GOOS=linux GOARCH=amd64 go build -o ransom_simulator_linux ransom_simulator_linux.go<br/>GO_ENABLED=0 go build -o ransom_simulator_linux_static ransom_simulator_linux.go | ransom_simulator_linux_enhanced<br/>ransom_simulator_linux_static |
+  | **Windows版（64位）**   | GOOS=windows GOARCH=amd64 go build -o ransom_simulator.exe ransom_simulator_windows.go | ransom_simulator_linux_enhanced                              |
+  | **macOS版（Intel）**    | GOOS=darwin GOARCH=amd64 go build -o ransom_simulator_macos ransom_simulator_linux.go | ransom_simulator_macos                                       |
 
-## 免责声明
-本项目遵循[MIT许可证](LICENSE)。开发者不对任何滥用行为负责。使用本工具即表示您同意：
-1. 仅在合法授权的安全测试中使用
-2. 不在生产环境或未授权系统中使用
-3. 对因不当使用造成的损失承担全部责任
+  > **提示**：Linux增强版包含更多攻击技术和日志功能，建议用于企业环境测试。
 
-**注意**：真实勒索软件是非法行为！本工具仅用于教育目的。
+  ### 基本使用
 
-## 项目链接
-- GitHub: https://github.com/yangzifun/ransom_simulator
-- 解密工具: https://encrypt.yangzifun.org/
+  ```bash
+  # 演习模式（不实际加密文件）
+  ./ransom_simulator_linux_enhanced -dry-run
+  
+  # 启用日志功能
+  ./ransom_simulator_linux_enhanced -log -dry-run
+  
+  # 指定工作线程数
+  ./ransom_simulator_linux_enhanced -workers=8 -log
+  
+  # 加密特定目录并启用日志
+  ./ransom_simulator_linux_enhanced -dir="/path/to/target" -log
+  
+  # 加密后删除原文件（危险！）
+  ./ransom_simulator_linux_enhanced -remove -log
+  ```
+
+  ## ⚙️ 命令行参数详解
+
+  | 参数       | 类型   | 描述                       | Windows 版本功能 | Linux增强功能 |
+  | ---------- | ------ | -------------------------- | ---------------- | ------------- |
+  | `-dir`     | string | 指定攻击目标（目录或文件） | ✅                | ✅             |
+  | `-ext`     | string | 指定要加密的文件扩展名     | ✅                | ✅             |
+  | `-workers` | int    | 并发Worker线程数量         | ✅                | ✅             |
+  | `-dry-run` | bool   | 演习模式，不实际加密       | ✅                | ✅             |
+  | `-remove`  | bool   | 加密后删除原文件           | ✅                | ✅             |
+  | `-log`     | bool   | 启用日志功能               | ❌                | ✅             |
+
+  ## 🎯 使用场景示例
+
+  ### 场景1：企业数据库攻击测试
+  ```bash
+  # 模拟对数据库服务器的攻击
+  ./ransom_simulator_linux_enhanced -log -dir="/var/lib/mysql,/opt/oracle" -workers=4
+  
+  # 效果：停止数据库服务、清理内存缓存、加密数据库文件
+  ```
+
+  ### 场景2：安全防御演练
+  ```bash
+  # 测试安全软件的防护能力
+  ./ransom_simulator_linux_enhanced -log -dry-run -ext=".conf,.key,.pem"
+  
+  # 效果：记录所有潜在攻击目标，不实际加密
+  ```
+
+  ### 场景3：日志审计测试
+  ```bash
+  # 测试日志系统的记录能力
+  ./ransom_simulator_linux_enhanced -log -workers=2 -ext=".log,.txt"
+  
+  # 效果：生成详细日志文件，便于事后分析
+  ```
+
+  ## 🔧 技术细节
+
+  ### 新增攻击技术
+
+  #### 1. 服务停止攻击
+  - **数据库服务**：MySQL、PostgreSQL、MongoDB、Redis、Oracle
+  - **安全软件**：阿里云安骑士、ClamAV、rkhunter、ossec
+  - **监控工具**：Zabbix、Nagios、Cacti
+
+  #### 2. 内存清理技术
+  - **数据库缓存**：MySQL缓存刷新、PostgreSQL缓存清理
+  - **系统内存**：页面缓存清理、目录项清理
+  - **网络缓存**：ARP缓存、DNS缓存清理
+
+  #### 3. 进程守护解除
+  - **进程管理器**：systemd、init、upstart、supervisord
+  - **定时任务**：cron、atd
+  - **监控进程**：各种守护进程
+
+  #### 4. 数据库链接解挂
+  - **客户端进程**：mysql、psql、mongo、redis-cli
+  - **网络连接**：关闭数据库端口（3306、5432等）
+  - **链接清理**：杀死所有数据库连接
+
+  ### 增强文件识别
+
+  #### 新增支持格式：
+  - **数据库文件**：`.ora`, `.dmp`, `.exp`, `.ibd`, `.frm`, `.wal`
+  - **配置文件**：`.conf`, `.cfg`, `.yml`, `.yaml`, `.toml`
+  - **备份文件**：`.backup`, `.old`, `.temp`, `.swp`
+  - **虚拟化文件**：`.vmdk`, `.vhd`, `.qcow2`, `.dockerfile`
+  - **密钥文件**：`.key`, `.pem`, `.crt`, `.cer`, `.pfx`
+
+  ### 日志系统
+
+  #### 日志文件结构：
+  ```
+  程序所在目录/
+  ├── success_encrypted.log  # 成功加密的文件列表
+  ├── failed_encrypted.log   # 加密失败的文件列表及错误信息
+  └── operations.log         # 完整操作日志
+  ```
+
+  #### 日志内容示例：
+  ```
+  =================== 勒索软件模拟器日志 ===================
+  程序版本: v2.9-Beta-Linux-Enhanced-Logging
+  开始时间: 2024-01-15 14:30:25
+  运行参数: ./ransom_simulator_linux_enhanced -log -workers 4
+  工作目录: /home/user/tools
+  =========================================================
+  
+  [2024-01-15 14:30:26] 开始停止数据库服务
+  [2024-01-15 14:30:27] 停止数据库服务完成
+  [2024-01-15 14:30:28] 开始清理数据库内存和缓存
+  [2024-01-15 14:30:28] 清理MySQL缓存
+  [2024-01-15 14:30:29] SUCCESS: /var/lib/mysql/data.ibd -> /var/lib/mysql/data.ibd.encrypted
+  [2024-01-15 14:30:29] FAILED: /etc/mysql/my.cnf - 权限不足
+  [2024-01-15 14:30:30] 加密工作完成: 成功 148, 失败 4
+  ```
+
+  ## 🛡️ 安全测试场景
+
+  ### 企业环境测试
+  ```bash
+  # 完整的企业攻击模拟
+  ./ransom_simulator_linux_enhanced -log \
+    -dir="/var/lib/mysql,/opt/oracle,/home/project" \
+    -workers=8 \
+    -remove
+  ```
+
+  ### 防御演练
+  ```bash
+  # 测试防御系统的检测能力
+  ./ransom_simulator_linux_enhanced -log \
+    -dry-run \
+    -ext=".sql,.db,.conf" \
+    -workers=4
+  ```
+
+  ### 日志审计测试
+  ```bash
+  # 测试日志系统的完整性
+  ./ransom_simulator_linux_enhanced -log \
+    -workers=2 \
+    -dir="/tmp/test_data"
+  ```
+
+  ## 🔍 模拟的关键攻击阶段 (MITRE ATT&CK®)
+
+  | **Tactic (战术)** | **ID** | **新增模拟行为**                                             |
+  | ----------------- | ------ | ------------------------------------------------------------ |
+  | **防御规避**      | TA0005 | **服务停止攻击**：停止数据库和安全服务<br>**内存清理**：清理数据库缓存和系统内存<br>**进程守护解除**：停止守护进程和定时任务 |
+  | **持久化**        | TA0003 | **增强互斥锁**：强制释放旧锁文件，自动重置状态               |
+  | **发现**          | TA0007 | **增强文件识别**：支持数据库文件、配置文件、备份文件<br>**数据库发现**：自动扫描数据库数据目录 |
+  | **横向移动**      | TA0008 | **数据库攻击**：终止数据库连接，解挂网络链接                 |
+  | **影响**          | TA0040 | **增强加密目标**：针对企业关键资产的专项攻击<br>**详细日志记录**：完整攻击过程审计追踪 |
+
+  ## 🔐 解密流程
+
+  1. 访问解密门户：https://encrypt.yangzifun.org/
+
+  2. 输入加密时生成的UUID
+
+  3. 下载解密工具：
+     ```bash
+     # 解密单个文件
+     decryptor -key=UUID -file=加密文件.encrypted
+      
+     # 批量解密目录
+     decryptor -key=UUID -dir=加密文件目录
+     ```
+
+  ## ⚠️ 免责声明
+
+  **重要提醒**：本工具为**安全研究和培训专用**，严禁用于非法用途！
+
+  ### 使用前必须确认：
+  1. ✅ 仅在合法授权的环境中使用
+  2. ✅ 获取系统所有者的明确授权
+  3. ✅ 在隔离的测试环境中运行
+  4. ✅ 备份所有重要数据
+
+  ### 法律责任：
+  - 开发者不对任何滥用行为负责
+  - 使用者需承担全部法律责任
+  - 违反法律规定的使用将面临法律制裁
+
+  **真实勒索软件是严重犯罪行为！本工具仅用于教育和防御研究。**
+
+  ## 📞 支持与贡献
+
+  ### 问题反馈
+  - GitHub Issues: [报告问题](https://github.com/yangzifun/ransom_simulator/issues)
+  - 安全漏洞: 请通过GitHub私密报告
+
+  ### 贡献指南
+  1. Fork 项目仓库
+  2. 创建功能分支
+  3. 提交更改
+  4. 推送分支
+  5. 创建Pull Request
+
+  ## 🔗 项目链接
+
+  - **GitHub仓库**: https://github.com/yangzifun/ransom_simulator
+  - **解密工具**: https://encrypt.yangzifun.org/
+  - **C2服务器**: Cloudflare Workers实现
+  - **文档**: 完整技术文档和使用指南
+
+  ---
+
+  **最后提醒**：网络安全是共同责任，使用本工具时请始终遵循道德和法律准则。让我们共同建设更安全的网络环境！
