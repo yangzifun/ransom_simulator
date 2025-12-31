@@ -67,11 +67,11 @@
   
   #### 编译步骤
   
-  | **目标平台**            | **命令**                                                     | **输出文件**                                                 |
-  | ----------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-  | **Linux增强版（64位）** | GOOS=linux GOARCH=amd64 go build -o ransom_simulator_linux ransom_simulator_linux.go<br/>GO_ENABLED=0 go build -o ransom_simulator_linux_static ransom_simulator_linux.go | ransom_simulator_linux_enhanced<br/>ransom_simulator_linux_static |
-  | **Windows版（64位）**   | GOOS=windows GOARCH=amd64 go build -o ransom_simulator.exe ransom_simulator_windows.go | ransom_simulator_linux_enhanced                              |
-  | **macOS版（Intel）**    | GOOS=darwin GOARCH=amd64 go build -o ransom_simulator_macos ransom_simulator_linux.go | ransom_simulator_macos                                       |
+  | **目标平台**            | **命令**                                                     | **输出文件**                                             |
+  | ----------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+  | **Linux增强版（64位）** | GOOS=linux GOARCH=amd64 go build -o ransom_simulator_linux ransom_simulator_linux.go<br/>GO_ENABLED=0 go build -o ransom_simulator_linux_static ransom_simulator_linux.go | ransom_simulator_linux<br/>ransom_simulator_linux_static |
+  | **Windows版（64位）**   | GOOS=windows GOARCH=amd64 go build -o ransom_simulator.exe ransom_simulator_windows.go | ransom_simulator_linux_enhanced                          |
+  | **macOS版（Intel）**    | GOOS=darwin GOARCH=amd64 go build -o ransom_simulator_macos ransom_simulator_linux.go | ransom_simulator_macos                                   |
   
   > **提示**：Linux增强版包含更多攻击技术和日志功能，建议用于企业环境测试。
   
@@ -92,14 +92,14 @@
   
   ## ⚙️ 命令行参数详解
   
-  | 参数     | 类型   | 描述                       | Windows 版本功能 | Linux增强功能 | 默认值       | 备注                       |
-  | -------- | ------ | -------------------------- | ---------------- | ------------- | ------------ | -------------------------- |
-  | -dir     | string | 指定攻击目标（目录或文件） | ✅                | ✅             | 系统根目录   | 逗号分隔多个目录           |
-  | -ext     | string | 指定要加密的文件扩展名     | ✅                | ✅             | 预定义扩展名 | 如：.txt,.pdf,.docx        |
-  | -workers | int    | 并发Worker线程数量         | ✅                | ✅             | CPU核心数    | 建议根据系统资源调整       |
-  | -dry-run | bool   | 演习模式，不实际加密       | ✅                | ✅             | false        | 用于测试和演示             |
-  | -remove  | bool   | 加密后删除原文件           | ✅                | ✅             | false        | 高危操作，谨慎使用         |
-  | -log     | bool   | 启用日志功能               | ✅                | ✅             | false        | 日志文件输出到程序所在目录 |
+  | 参数     | 类型   | 描述                       | Windows | Linux | macOS | 默认值       | 备注                       |
+  | -------- | ------ | -------------------------- | ------- | ----- | ----- | ------------ | -------------------------- |
+  | -dir     | string | 指定攻击目标（目录或文件） | ✅       | ✅     | ✅     | 系统根目录   | 逗号分隔多个目录           |
+  | -ext     | string | 指定要加密的文件扩展名     | ✅       | ✅     | ✅     | 预定义扩展名 | 如：.txt,.pdf,.docx        |
+  | -workers | int    | 并发Worker线程数量         | ✅       | ✅     | ✅     | CPU核心数    | 建议根据系统资源调整       |
+  | -dry-run | bool   | 演习模式，不实际加密       | ✅       | ✅     | ✅     | false        | 用于测试和演示             |
+  | -remove  | bool   | 加密后删除原文件           | ✅       | ✅     | ✅     | false        | 高危操作，谨慎使用         |
+  | -log     | bool   | 启用日志功能               | ✅       | ✅     | ✅     | false        | 日志文件输出到程序所在目录 |
   
   ## 🔐 密钥管理
   
