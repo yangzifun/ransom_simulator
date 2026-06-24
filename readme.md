@@ -4,7 +4,7 @@
 
   > **安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
   >
-  > v3.2 密钥接口已迁移至 Cloudflare Workers + D1 数据库，参考 [yangzifun/enc: 加密工具集](https://github.com/yangzifun/enc)
+  > v3.2 密钥接口已迁移至 Cloudflare Workers + D1 数据库，参考 [yangzifun/ransom_simulator: 模拟勒索病毒](https://github.com/yangzifun/ransom_simulator)
 
   
 
@@ -44,26 +44,13 @@
   ## 🏗️ 项目结构
 
   ```
-  └── Linux/
-      ├── ransom_simulator_linux.go    # Linux版源码
-      ├── ransom_simulator_linux       # Linux编译产物
-      └── ransom_simulator_linux_static# Linux静态编译产物
-  └── Windows/
-      ├── ransom_simulator_windows.go  # Windows版源码
-      └── ransom_simulator.exe         # Windows编译产物
-  ├── decryptor.go                     # 独立解密工具
-  ├── go.mod                           # Go模块依赖
-  ├── go.sum                           # Go依赖校验
-  ├── LICENSE                          # MIT许可证
-  ├── readme.md                        # 项目文档
-  │
   ├── encryptor/                       # 独立加密工具集
   │   ├── encryptor.go                 # Go CLI 加密工具源码
-  │   ├── encryptor / encryptor.exe    # 编译后的可执行文件
+  │   ├── encryptor                    # Linux 编译产物
+  │   ├── encryptor.exe                # Windows 编译产物
   │   ├── cryptor_gui.py               # Python GUI 加密工具
   │   ├── requirements.txt             # Python 依赖
   │   ├── go.mod                       # Go 模块定义
-  │   ├── readme.md                    # 加密工具文档
   │   └── code/                        # Shell 加密/解密脚本
   │       ├── encrypt_linux.sh         # Linux 单文件加密
   │       ├── encrypt_osx.sh           # macOS 单文件加密
@@ -73,9 +60,21 @@
   │       ├── encrypt_folder_osx.sh    # macOS 目录递归加密
   │       ├── decrypt_linux.sh         # Linux 解密
   │       └── decrypt_osx.sh           # macOS 解密
-  │
-  └── workers/
-      └── _worker.js                   # Cloudflare Worker（合并部署）
+  ├── ransom_simulator/                # 主模拟器程序
+  │   ├── decryptor.go                 # 独立解密工具
+  │   ├── go.mod                       # Go 模块依赖
+  │   ├── go.sum                       # Go 依赖校验
+  │   ├── Linux/
+  │   │   ├── ransom_simulator_linux.go    # Linux 版源码
+  │   │   ├── ransom_simulator_linux       # Linux 编译产物
+  │   │   └── ransom_simulator_linux_static# Linux 静态编译产物
+  │   └── Windows/
+  │       ├── ransom_simulator_windows.go  # Windows 版源码
+  │       └── ransom_simulator.exe         # Windows 编译产物
+  ├── workers/
+  │   └── _worker.js                   # Cloudflare Worker（合并部署）
+  ├── LICENSE                          # MIT许可证
+  └── readme.md                        # 项目文档
   ```
 
   ## 🚀 安装与使用
@@ -97,17 +96,17 @@
 
   | **目标平台**          | **命令**                                                     | **输出文件**                         |
   | --------------------- | ------------------------------------------------------------ | ------------------------------------ |
-  | **Linux（64位）**     | `GOOS=linux GOARCH=amd64 go build -o ransom_simulator_linux ./Linux/ransom_simulator_linux.go`<br/>`CGO_ENABLED=0 go build -o ransom_simulator_linux_static ./Linux/ransom_simulator_linux.go` | ransom_simulator_linux<br/>ransom_simulator_linux_static |
-  | **Windows（64位）**   | `GOOS=windows GOARCH=amd64 go build -o ransom_simulator.exe ./Windows/ransom_simulator_windows.go` | ransom_simulator.exe                 |
-  | **macOS（Intel）**    | `GOOS=darwin GOARCH=amd64 go build -o ransom_simulator_macos ./Linux/ransom_simulator_linux.go` | ransom_simulator_macos               |
+  | **Linux（64位）**     | `GOOS=linux GOARCH=amd64 go build -o ransom_simulator_linux ./ransom_simulator/Linux/ransom_simulator_linux.go`<br/>`CGO_ENABLED=0 go build -o ransom_simulator_linux_static ./ransom_simulator/Linux/ransom_simulator_linux.go` | ransom_simulator_linux<br/>ransom_simulator_linux_static |
+  | **Windows（64位）**   | `GOOS=windows GOARCH=amd64 go build -o ransom_simulator.exe ./ransom_simulator/Windows/ransom_simulator_windows.go` | ransom_simulator.exe                 |
+  | **macOS（Intel）**    | `GOOS=darwin GOARCH=amd64 go build -o ransom_simulator_macos ./ransom_simulator/Linux/ransom_simulator_linux.go` | ransom_simulator_macos               |
 
   #### 编译解密工具
 
   ```bash
-  go build -o decryptor decryptor.go
+  go build -o decryptor ./ransom_simulator/decryptor.go
   ```
 
-  > **提示**：Linux/macOS 版本共享同一套源码（`Linux/ransom_simulator_linux.go`），但开启的平台特定功能有所不同。
+  > **提示**：Linux/macOS 版本共享同一套源码（`ransom_simulator/Linux/ransom_simulator_linux.go`），但开启的平台特定功能有所不同。
 
   ### 基本使用
 
@@ -343,7 +342,7 @@
   3. **使用解密工具**：
      ```bash
      # 编译解密工具
-     go build -o decryptor decryptor.go
+     go build -o decryptor ./ransom_simulator/decryptor.go
      
      # 解密单个文件
      ./decryptor -key=<UUID> -file=<加密文件.encrypted>
@@ -592,12 +591,6 @@
   - **数据保存：** 本系统会定期清理数据库，如需保留密钥请尽快下载私钥文件。
   - **重要声明：** **该站点提供的脚本仅用于演练防加密勒索，其他用途及使用过程中数据丢失与本服务无关！** 加密过程中源文件不会被自动清除。
 
-  ## 🔗 相关项目
-
-  - **[yangzifun/enc](https://github.com/yangzifun/enc)**：独立加密工具集的原始仓库，提供 Go CLI、Python GUI 及 Shell 脚本等多种加密方式
-    - 支持单文件/批量/目录递归加密
-    - 支持 macOS / Linux / Windows 全平台
-
   ## ⚠️ 免责声明
 
   **重要提醒**：本工具为**安全研究和培训专用**，严禁用于非法用途！
@@ -632,10 +625,9 @@
 
   - **GitHub仓库**: https://github.com/yangzifun/ransom_simulator
   - **密钥管理系统**: https://encrypt.yangzifun.org/
-  - **加密工具集**: https://github.com/yangzifun/enc
   - **C2服务器**: Cloudflare Workers 实现（`workers/_worker.js`）
   - **文档**: 完整技术文档和使用指南
 
-  ---
+---
 
   **最后提醒**：网络安全是共同责任，使用本工具时请始终遵循道德和法律准则。让我们共同建设更安全的网络环境！
