@@ -110,6 +110,12 @@ async function handleKeyGeneration(request, env) {
         );
         const result = await stmt.bind(uuid, publicKeyPem, privateKeyPem).run();
 
+        // 更新 key_metrics 统计表（不受 keys 表清理影响）
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+            "UPDATE key_metrics SET total_generated = total_generated + 1, latest_uuid = ?, latest_generated_at = ? WHERE id = 1"
+        ).bind(uuid, now).run();
+
         if (result.success) {
             console.log(`Successfully saved UUID: ${uuid} to D1.`);
             return new Response(JSON.stringify({
@@ -612,7 +618,7 @@ async function handleApiStats(env, request) {
             case '1m': default: dateRange = "-30 days";
         }
 
-        const countStmt = env.DB.prepare("SELECT COUNT(*) as total FROM keys");
+        const countStmt = env.DB.prepare("SELECT total_generated as total FROM key_metrics WHERE id = 1");
         const countResult = await countStmt.first();
 
         let trendStmt;
@@ -631,7 +637,7 @@ async function handleApiStats(env, request) {
         }
         const { results: trendResults } = await trendStmt.bind(dateRange).all();
 
-        const latestStmt = env.DB.prepare("SELECT uuid, created_at FROM keys ORDER BY created_at DESC LIMIT 1");
+        const latestStmt = env.DB.prepare("SELECT latest_uuid as uuid, latest_generated_at as created_at FROM key_metrics WHERE id = 1");
         const latestResult = await latestStmt.first();
 
         return Response.json({
