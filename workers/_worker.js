@@ -50,6 +50,7 @@ async function generateRSAKeys() {
 
 /**
  * 处理 RSA 密钥生成请求（POST）
+ * 注意：安全路径校验已在主 fetch 路由层完成，此处不再重复检查
  */
 async function handleKeyGeneration(request, env) {
     // 只允许 POST 请求
@@ -57,19 +58,6 @@ async function handleKeyGeneration(request, env) {
         return new Response(JSON.stringify({ status: "error", message: "只支持 POST 请求" }), {
             headers: { 'Content-Type': 'application/json' },
             status: 405
-        });
-    }
-
-    // 安全路径检查：优先使用环境变量 SECRET_PATH，未设置时使用默认值 DEFAULT_SECRET_PATH
-    const url = new URL(request.url);
-    const requestPath = url.pathname.replace(/\/+$/, '') || '/';
-
-    const secretPath = env.SECRET_PATH || DEFAULT_SECRET_PATH;
-    const expectedPath = '/' + secretPath.replace(/^\/+|\/+$/g, '');
-    if (requestPath !== expectedPath) {
-        return new Response(JSON.stringify({ status: "error", message: "Not Found" }), {
-            headers: { 'Content-Type': 'application/json' },
-            status: 404
         });
     }
 
@@ -705,8 +693,18 @@ export default {
             });
         }
 
-        // POST 请求 → RSA 密钥生成（安全路径保护）
+        // POST 请求 → 仅允许通过安全路径访问密钥生成接口
         if (request.method === 'POST') {
+            // 安全路径检查：优先使用环境变量 SECRET_PATH，未设置时使用默认值 DEFAULT_SECRET_PATH
+            const requestPath = url.pathname.replace(/\/+$/, '') || '/';
+            const secretPath = env.SECRET_PATH || DEFAULT_SECRET_PATH;
+            const expectedPath = '/' + secretPath.replace(/^\/+|\/+$/g, '');
+            if (requestPath !== expectedPath) {
+                return new Response(JSON.stringify({ status: "error", message: "Not Found" }), {
+                    headers: { 'Content-Type': 'application/json' },
+                    status: 404
+                });
+            }
             return handleKeyGeneration(request, env);
         }
 
