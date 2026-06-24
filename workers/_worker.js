@@ -466,9 +466,20 @@ function getHtmlPage() {
             <div class="mb-10">
                 <div class="flex items-center justify-center mb-4">
                     <i data-lucide="shield" class="w-10 h-10 mr-4 text-gray-600"></i>
-                    <h1 class="text-3xl sm:text-4xl font-bold text-gray-700">密钥管理中心</h1>
+                    <h1 class="text-3xl sm:text-4xl font-bold text-gray-700">密钥管理中心 :V3.2</h1>
                 </div>
                 <p class="text-gray-500 text-lg mb-8 min-h-[1.2em]">安全、跨平台的文件加密解决方案与数据看板</p>
+            </div>
+
+            <!-- 通知公告 -->
+            <div class="bg-yellow-50 border border-yellow-400 rounded-xl p-5 mb-8 text-left">
+                <div class="flex items-start">
+                    <i data-lucide="megaphone" class="w-6 h-6 mr-3 text-yellow-600 flex-shrink-0 mt-0.5"></i>
+                    <div>
+                        <span class="font-semibold text-yellow-800">通知公告：</span>
+                        <span class="text-yellow-700">数据库清理，清理时间 2026年6月24日</span>
+                    </div>
+                </div>
             </div>
 
             <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 mb-8 text-left">
