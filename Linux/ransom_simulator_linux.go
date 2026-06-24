@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	version   = "v3.1-Linux"
+	version   = "v3.2-Linux"
 	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
 	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
 )
