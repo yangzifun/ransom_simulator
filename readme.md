@@ -4,7 +4,7 @@
 
   > **安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
   >
-  > v3.2 密钥接口已迁移至 Cloudflare Workers + D1 数据库，参考 [yangzifun/ransom_simulator: 模拟勒索病毒](https://github.com/yangzifun/ransom_simulator)
+  > v3.2 密钥接口已迁移至 Cloudflare Workers + D1 数据库，参考 [yangzifun/enc: 加密工具集](https://github.com/yangzifun/enc)
 
   
 
@@ -352,12 +352,251 @@
      ./decryptor -key=<UUID> -dir=<加密文件目录>
      ```
 
+  ## 🔒 加密工具集（encryptor/）
+
+  `encryptor/` 目录提供了完整的文件加密工具链，支持 Shell 脚本、Go CLI 和 Python GUI 三种使用方式。
+
+  > **密钥查询与管理页面：** https://encrypt.yangzifun.org/
+  > **API 接口：** https://encrypt.yangzifun.org（密钥生成 POST 路径：`/E56dSY`，可在 Worker 端自行修改）
+
+  ### 通用操作流程
+
+  1. **下载工具：** 根据您的操作系统（macOS, Linux, Windows），从密钥查询管理页面下载对应的加密/解密脚本或程序。
+  2. **加密文件：** 运行相应的加密工具，并指定要加密的文件或目录。工具会生成一个唯一的 **UUID**，请务必将其**妥善保存**。
+  3. **查询密钥：** 在密钥查询管理页面输入 UUID，查询与加密文件对应的私钥。私钥是解密文件的**唯一凭证**，**请务必下载并妥善保管，切勿泄露或丢失！**
+  4. **解密文件：** 运行解密工具，提供加密文件及对应的私钥文件，即可解密。
+
+  ### Shell 脚本使用
+
+  Shell 脚本位于 `encryptor/code/` 目录，需要系统安装 `curl`、`jq`（用于 JSON 解析）、`openssl` 等命令工具。
+
+  #### 单文件加密
+
+  ```bash
+  chmod +x encrypt_linux.sh    # Linux
+  chmod +x encrypt_osx.sh      # macOS
+  
+  ./encrypt_linux.sh /path/to/your/file.txt
+  ./encrypt_osx.sh /path/to/your/file.txt
+  ```
+
+  将 `file.txt` 加密为 `file.txt.enc`，并在控制台显示生成的 UUID。**请务必记录此 UUID。**
+
+  **使用安全路径（可选）：**
+
+  为防止 API 接口被恶意扫描，可在 Worker 端设置 `SECRET_PATH` 环境变量，此时客户端需传入相同路径才能获取密钥。
+
+  ```bash
+  # Worker SECRET_PATH=my-secret-token 时，客户端必须传入 --secret-path
+  ./encrypt_linux.sh --secret-path my-secret-token /path/to/your/file.txt
+  ./encrypt_osx.sh --secret-path my-secret-token /path/to/your/file.txt
+  ```
+
+  > 安全路径只会拦截**密钥生成 POST 请求**。密钥查询页面（`/`、`/query`、`/stats`）不受影响，始终可用。
+
+  #### 批量加密
+
+  ```bash
+  chmod +x batch_encrypt_linux.sh encrypt_linux.sh
+  chmod +x batch_encrypt_osx.sh encrypt_osx.sh
+
+  ./batch_encrypt_linux.sh [可选：要加密的目录路径]
+  ./batch_encrypt_osx.sh [可选：要加密的目录路径]
+  ```
+
+  > 批量加密依赖单文件加密脚本（`encrypt_linux.sh` 或 `encrypt_osx.sh`），请将它们放在同一目录。
+
+  #### 目录递归加密
+
+  ```bash
+  chmod +x encrypt_folder_linux.sh
+  chmod +x encrypt_folder_osx.sh
+
+  ./encrypt_folder_linux.sh /path/to/your/folder
+  ./encrypt_folder_osx.sh /path/to/your/folder
+  ```
+
+  加密结果（每个文件对应一个 UUID）会记录在 `encrypted_files_summary.txt` 中。
+
+  #### 解密脚本
+
+  ```bash
+  chmod +x decrypt_linux.sh
+  chmod +x decrypt_osx.sh
+
+  ./decrypt_linux.sh /path/to/private_key_xxxx.pem /path/to/file.txt.enc
+  ./decrypt_osx.sh /path/to/private_key_xxxx.pem /path/to/file.txt.enc
+  ```
+
+  > 解密需要加密生成的 `.enc` 文件以及在密钥查询页面下载的 `.pem` 私钥文件。
+
+  ### Python GUI 工具
+
+  `encryptor/cryptor_gui.py` 提供了图形化界面的加密工具，适合不熟悉命令行的用户。
+
+  **依赖安装：**
+  ```bash
+  pip install -r encryptor/requirements.txt
+  ```
+
+  **启动：**
+  ```bash
+  python encryptor/cryptor_gui.py
+  ```
+
+  ### Go CLI 版本
+
+  Go CLI 版本提供高性能的多文件并发加密，支持跨平台编译。
+
+  #### 构建
+
+  ```bash
+  cd encryptor
+  CGO_ENABLED=0 go build -ldflags "-s -w" -o encryptor_pro .
+  ```
+
+  #### 使用
+
+  ```
+  RSA 密钥混合加密工具 - 版本: v1.1-go-cli
+  ----------------------------------------------------
+  本工具可以加密指定的文件，或递归加密指定文件夹下的所有文件。
+  每个成功加密的文件都会生成一个独立的密钥对和UUID。
+
+  用法:
+    ./encryptor_pro [选项] <文件/文件夹路径1> [<文件/文件夹路径2> ...]
+
+  选项:
+    -ext string
+          可选：只加密指定扩展名的文件，用逗号分隔 (例: .txt,.jpg)
+    -secret-path string
+          可选：API 安全路径（需与 Worker 配置一致）
+    -workers int
+          可选：指定并发执行的 worker 数量 (默认: 8)
+
+  示例:
+    # 加密单个文件
+    ./encryptor_pro my_secret.txt
+
+    # 使用安全路径加密
+    ./encryptor_pro -secret-path your-secret-token my_secret.txt
+
+    # 加密整个 'documents' 文件夹
+    ./encryptor_pro ./documents
+
+    # 只加密 'photos' 文件夹中的 .jpg 和 .png 文件
+    ./encryptor_pro -ext .jpg,.png ./photos
+
+    # 使用 8 个并发 worker 加密多个目标
+    ./encryptor_pro -workers 8 report.docx project_folder/
+
+    # 也可以通过环境变量设置安全路径
+    SECRET_PATH=your-secret-token ./encryptor_pro my_secret.txt
+  ```
+
+  ### API 参考
+
+  以下 API 由 `workers/_worker.js` 部署的 Cloudflare Worker 提供。
+
+  #### GET/POST /beacon_check_in （C2 Beacon 接收）
+
+  > 完整 URL：https://encrypt.yangzifun.org/beacon_check_in
+  >
+  > 支持任意 HTTP 方法，用于勒索模拟器的心跳检测。
+
+  ```bash
+  curl -X POST "https://encrypt.yangzifun.org/beacon_check_in"
+  ```
+
+  ```json
+  {
+      "status": "ok",
+      "message": "Beacon acknowledged"
+  }
+  ```
+
+  > 服务器会在日志中记录来源 IP、User-Agent、请求时间戳等 IOC 信息。无数据库依赖，仅记录日志。
+
+  #### POST /E56dSY （密钥生成）
+
+  > 完整 URL：https://encrypt.yangzifun.org/E56dSY
+
+  ```bash
+  curl -X POST https://encrypt.yangzifun.org/E56dSY \
+    -H "Content-Type: application/json" \
+    -d '{}'
+  ```
+
+  ```json
+  {
+      "status": "success",
+      "message": "UUID 和 RSA 密钥对生成并保存成功。",
+      "uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...",
+      "private_key_pem": "-----BEGIN PRIVATE KEY-----\n...",
+      "public_key_jwk": { ... },
+      "private_key_jwk": { ... }
+  }
+  ```
+
+  #### GET /query?uuid=xxx （密钥查询）
+
+  > 完整 URL：https://encrypt.yangzifun.org/query?uuid=xxx
+
+  ```bash
+  curl "https://encrypt.yangzifun.org/query?uuid=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  ```
+
+  ```json
+  {
+      "status": "success",
+      "uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "public_key": "-----BEGIN PUBLIC KEY-----\n...",
+      "private_key": "-----BEGIN PRIVATE KEY-----\n..."
+  }
+  ```
+
+  #### GET /stats?range=1m （统计数据）
+
+  > 完整 URL：https://encrypt.yangzifun.org/stats?range=1m
+
+  ```bash
+  curl "https://encrypt.yangzifun.org/stats?range=1m"
+  ```
+
+  | 参数 | 可选值 | 说明 |
+  |------|--------|------|
+  | `range` | `1m`, `3m`, `6m`, `1y` | 统计时间范围（默认 1m） |
+
+  ```json
+  {
+      "status": "success",
+      "total": 128,
+      "history": [
+          { "date": "2025-05-01", "count": 5 },
+          { "date": "2025-05-02", "count": 3 }
+      ],
+      "latest": {
+          "uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+          "created_at": "2025-05-26T12:34:56.000Z"
+      },
+      "range": "1m"
+  }
+  ```
+
+  ### 重要注意事项
+
+  - **UUID 和私钥：** UUID 是识别密钥的唯一凭证，私钥是解密文件的**唯一密钥**。**务必妥善保存！** 丢失私钥将导致文件永远无法解密。
+  - **网络连接：** 加密过程需要访问 Cloudflare Worker API，请确保网络稳定。
+  - **API 限制：** 脚本、程序及 API 服务会不定时更新，如遇执行错误，请从密钥查询页面更新程序。
+  - **数据保存：** 本系统会定期清理数据库，如需保留密钥请尽快下载私钥文件。
+  - **重要声明：** **该站点提供的脚本仅用于演练防加密勒索，其他用途及使用过程中数据丢失与本服务无关！** 加密过程中源文件不会被自动清除。
+
   ## 🔗 相关项目
 
-  - **[yangzifun/enc](https://github.com/yangzifun/enc)**：独立加密工具集，提供 Go CLI、Python GUI 及 Shell 脚本等多种加密方式
+  - **[yangzifun/enc](https://github.com/yangzifun/enc)**：独立加密工具集的原始仓库，提供 Go CLI、Python GUI 及 Shell 脚本等多种加密方式
     - 支持单文件/批量/目录递归加密
     - 支持 macOS / Linux / Windows 全平台
-    - 详见 `encryptor/readme.md`
 
   ## ⚠️ 免责声明
 
@@ -397,6 +636,6 @@
   - **C2服务器**: Cloudflare Workers 实现（`workers/_worker.js`）
   - **文档**: 完整技术文档和使用指南
 
----
+  ---
 
   **最后提醒**：网络安全是共同责任，使用本工具时请始终遵循道德和法律准则。让我们共同建设更安全的网络环境！
