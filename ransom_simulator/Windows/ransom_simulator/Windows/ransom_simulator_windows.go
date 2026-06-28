@@ -1,4 +1,4 @@
-// ransom_simulator_windows.go - Windows专用版本（增强版）带日志功能 - API优先获取密钥，失败回退本地密钥
+// ransom_simulator_windows.go - Windows专用版本（增强版）带日志功能
 package main
 
 import (
