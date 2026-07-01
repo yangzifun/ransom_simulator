@@ -588,7 +588,7 @@ function getHtmlPage() {
                 </div>
                 <h2 class="text-xl font-semibold text-gray-700 text-center mb-6">相关链接</h2>
                 <div class="flex flex-col sm:flex-row border-2 border-gray-400 rounded overflow-hidden max-w-2xl mx-auto">
-                    <a href="https://github.com/yangzifun/enc" target="_blank" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-900 text-white hover:bg-black transition-colors"><i data-lucide="github" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">项目GitHub</span></a>
+                    <a href="https://github.com/yangzifun/ransom_simulator" target="_blank" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-900 text-white hover:bg-black transition-colors"><i data-lucide="github" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">项目GitHub</span></a>
                     <a href="https://bbs.yangzihome.space/archives/encrypt" target="_blank" rel="noopener noreferrer" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-200 text-gray-700 border-0 sm:border-l-2 border-gray-400 hover:bg-gray-300 transition-colors"><i data-lucide="book" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">加密文档</span></a>
                     <a href="https://bbs.yangzihome.space/archives/extortion" target="_blank" rel="noopener noreferrer" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-200 text-gray-700 border-0 sm:border-l-2 border-gray-400 hover:bg-gray-300 transition-colors"><i data-lucide="book" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">勒索文档</span></a>
                 </div>
