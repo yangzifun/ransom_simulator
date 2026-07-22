@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
@@ -1424,11 +1425,13 @@ func runEncryptionWithMonitor(files []string, numWorkers int, stats *counters, o
 }
 
 // writeTasksFile 将文件列表写入任务文件
+// 使用 base64 编码公钥 PEM 以避免多行 PEM 破坏任务文件格式
 func writeTasksFile(taskFile string, files []string, removeOriginal bool, publicKeyStr string, uuid string) error {
 	var buf bytes.Buffer
+	publicKeyB64 := base64.StdEncoding.EncodeToString([]byte(publicKeyStr))
 	buf.WriteString(fmt.Sprintf("remove=%s\n", strconv.FormatBool(removeOriginal)))
 	buf.WriteString(fmt.Sprintf("uuid=%s\n", uuid))
-	buf.WriteString(fmt.Sprintf("public_key=%s\n", publicKeyStr))
+	buf.WriteString(fmt.Sprintf("public_key_b64=%s\n", publicKeyB64))
 	buf.WriteString(fmt.Sprintf("total=%d\n", len(files)))
 	for _, f := range files {
 		buf.WriteString(f + "\n")
@@ -1954,20 +1957,34 @@ func runWorker() {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "remove=") {
 			removeOriginal, _ = strconv.ParseBool(strings.TrimPrefix(line, "remove="))
+		} else if strings.HasPrefix(line, "public_key_b64=") {
+			// 解码 base64 编码的公钥 PEM
+			b64Str := strings.TrimPrefix(line, "public_key_b64=")
+			decoded, err := base64.StdEncoding.DecodeString(b64Str)
+			if err == nil {
+				publicKeyStr = string(decoded)
+			}
 		} else if strings.HasPrefix(line, "public_key=") {
+			// 兼容旧格式
 			publicKeyStr = strings.TrimPrefix(line, "public_key=")
 		}
 	}
 
-	// 收集文件列表（从第一个非头部行开始）
+	// 收集文件列表（只收集以 / 开头或驱动器号开头的绝对路径行）
 	var files []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "remove=") || strings.HasPrefix(line, "uuid=") ||
-			strings.HasPrefix(line, "public_key=") || strings.HasPrefix(line, "total=") {
+		if line == "" ||
+			strings.HasPrefix(line, "remove=") ||
+			strings.HasPrefix(line, "uuid=") ||
+			strings.HasPrefix(line, "public_key") ||
+			strings.HasPrefix(line, "total=") {
 			continue
 		}
-		files = append(files, line)
+		// 只接受看起来像文件路径的行（以 / 开头或以驱动器号开头）
+		if strings.HasPrefix(line, "/") || (len(line) >= 2 && line[1] == ':') {
+			files = append(files, line)
+		}
 	}
 
 	// 使用文件锁 + 进度文件实现跨进程的文件处理协调
@@ -2050,10 +2067,14 @@ func updateProgressWithLock(lockFile, progressFile, resultFile, filePath string,
 			progressContent := fmt.Sprintf("success=%d\nfailed=%d\n", successCount, failCount)
 			os.WriteFile(progressFile, []byte(progressContent), 0644)
 
-			// 记录到结果文件
+			// 记录到结果文件（使用追加模式，避免覆盖）
 			if resultFile != "" {
 				resultEntry := filePath + "\n"
-				os.WriteFile(resultFile, []byte(resultEntry), 0644)
+				f, err := os.OpenFile(resultFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if err == nil {
+					f.WriteString(resultEntry)
+					f.Close()
+				}
 			}
 
 			return
