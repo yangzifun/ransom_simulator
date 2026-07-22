@@ -94,11 +94,11 @@
 
   #### 编译步骤
 
-  | **目标平台**          | **命令**                                                     | **输出文件**                         |
-  | --------------------- | ------------------------------------------------------------ | ------------------------------------ |
-  | **Linux（64位）**     | `GOOS=linux GOARCH=amd64 go build -o ransom_simulator_linux ./ransom_simulator/Linux/ransom_simulator_linux.go`<br/>`CGO_ENABLED=0 go build -o ransom_simulator_linux_static ./ransom_simulator/Linux/ransom_simulator_linux.go` | ransom_simulator_linux<br/>ransom_simulator_linux_static |
-  | **Windows（64位）**   | `GOOS=windows GOARCH=amd64 go build -o ransom_simulator.exe ./ransom_simulator/Windows/ransom_simulator_windows.go` | ransom_simulator.exe                 |
-  | **macOS（Intel）**    | `GOOS=darwin GOARCH=amd64 go build -o ransom_simulator_macos ./ransom_simulator/Linux/ransom_simulator_linux.go` | ransom_simulator_macos               |
+| **目标平台**        | **命令**                                                     | **输出文件**                                             |
+| ------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| **Linux（64位）**   | `GOOS=linux GOARCH=amd64 go build -o ransom_simulator_linux ./ransom_simulator_linux.go`<br/>`CGO_ENABLED=0 go build -o ransom_simulator_linux_static ./ransom_simulator_linux.go` | ransom_simulator_linux<br/>ransom_simulator_linux_static |
+| **Windows（64位）** | `GOOS=windows GOARCH=amd64 go build -o ransom_simulator.exe ./ransom_simulator_windows.go` | ransom_simulator.exe                                     |
+| **macOS（Intel）**  | `GOOS=darwin GOARCH=amd64 go build -o ransom_simulator_macos ./ransom_simulator_linux.go` | ransom_simulator_macos                                   |
 
   #### 编译解密工具
 
