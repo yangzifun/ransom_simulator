@@ -70,6 +70,41 @@ async function handleKeyGeneration(request, env) {
         });
     }
 
+    // Turnstile 人机验证
+    const turnstileSecret = env.TURNSTILE_SECRET_KEY;
+    if (turnstileSecret) {
+        let body;
+        try {
+            body = await request.clone().json();
+        } catch {
+            return new Response(JSON.stringify({ status: "error", message: "请求体解析失败" }), {
+                headers: { 'Content-Type': 'application/json' },
+                status: 400
+            });
+        }
+        const token = body['cf-turnstile-response'];
+        if (!token) {
+            return new Response(JSON.stringify({ status: "error", message: "缺少人机验证 token" }), {
+                headers: { 'Content-Type': 'application/json' },
+                status: 400
+            });
+        }
+        const formData = new FormData();
+        formData.append('secret', turnstileSecret);
+        formData.append('response', token);
+        const verifyResult = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            body: formData,
+        });
+        const verifyOutcome = await verifyResult.json();
+        if (!verifyOutcome.success) {
+            return new Response(JSON.stringify({ status: "error", message: "人机验证失败，请重试" }), {
+                headers: { 'Content-Type': 'application/json' },
+                status: 403
+            });
+        }
+    }
+
     let uuid, publicKeyPem, privateKeyPem, publicJwk, privateJwk;
 
     try {
@@ -164,7 +199,8 @@ async function handleKeyGeneration(request, env) {
 // 第二部分：密钥查询与统计面板 (源自 uuidgetkey.js)
 // ===================================================================================
 
-function getHtmlPage() {
+function getHtmlPage(env) {
+    const turnstileSiteKey = env ? env.TURNSTILE_SITE_KEY : '';
     const CLIENT_SCRIPT = `
       document.addEventListener('DOMContentLoaded', () => {
           lucide.createIcons();
@@ -222,10 +258,23 @@ function getHtmlPage() {
                   \`;
                   lucide.createIcons();
                   try {
+                      let requestBody = {};
+                      const turnstileWidget = document.querySelector('.cf-turnstile');
+                      if (turnstileWidget && typeof turnstile !== 'undefined') {
+                          const token = turnstile.getResponse();
+                          if (!token) {
+                              showError(generateResult, '请先完成人机验证');
+                              generateBtn.disabled = false;
+                              generateBtn.innerHTML = '<i data-lucide="sparkles" class="w-5 h-5 mr-3"></i> 生成密钥';
+                              lucide.createIcons();
+                              return;
+                          }
+                          requestBody['cf-turnstile-response'] = token;
+                      }
                       const response = await fetch('/api/generate', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({})
+                          body: JSON.stringify(requestBody)
                       });
                       const data = await response.json();
                       if (data.status === 'success') {
@@ -507,6 +556,7 @@ function getHtmlPage() {
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     <script>
       tailwind.config = {
         theme: {
@@ -614,6 +664,7 @@ function getHtmlPage() {
                             <h3 class="text-lg font-semibold text-gray-700">生成密钥</h3>
                         </div>
                         <p class="text-sm text-gray-500 mb-4">点击下方按钮生成新的 RSA 密钥对及 UUID。</p>
+                        ${turnstileSiteKey ? `<div class="cf-turnstile mb-4" data-sitekey="${turnstileSiteKey}" data-theme="light"></div>` : ''}
                         <button type="button" id="generateKeyBtn" class="w-full flex items-center justify-center px-6 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded font-medium hover:bg-gray-800 transition-colors">
                             <i data-lucide="sparkles" class="w-5 h-5 mr-3"></i> 生成密钥
                         </button>
@@ -856,7 +907,7 @@ export default {
 
         switch (url.pathname) {
             case '/':
-                return new Response(getHtmlPage(), {
+                return new Response(getHtmlPage(env), {
                     headers: { 'Content-Type': 'text/html;charset=UTF-8' },
                 });
             case '/query':

@@ -303,8 +303,10 @@
   1. **保存 UUID**：加密时程序会输出 UUID，请务必保存
 
   2. **查询私钥**：访问 [加密密钥管理系统](https://encrypt.yangzifun.org/)
-     - 在页面中输入 UUID 查询对应的 RSA 私钥
-     - 下载私钥文件（PEM 格式）
+     - **密钥查询**：在页面左侧输入 UUID 查询对应的 RSA 私钥
+     - **密钥生成**：在页面右侧点击"生成密钥"按钮，完成 Turnstile 人机验证后即可生成新的 RSA 密钥对
+     - 下载私钥文件（PEM 格式），支持复制和下载
+     - 页面顶部提供系统概况面板，展示累计生成总数和趋势图
 
   3. **使用解密工具**：
      ```bash
@@ -341,9 +343,11 @@
 
   > 服务器会在日志中记录来源 IP、User-Agent、请求时间戳等 IOC 信息。无数据库依赖，仅记录日志。
 
-  #### POST /E56dSY （密钥生成）
+  #### POST /E56dSY （密钥生成，安全路径）
 
   > 完整 URL：https://encrypt.yangzifun.org/E56dSY
+  >
+  > 安全路径接口，供勒索模拟器程序调用。默认路径为代码中硬编码的 `E56dSY`，可通过 `SECRET_PATH` 环境变量修改。
 
   ```bash
   curl -X POST https://encrypt.yangzifun.org/E56dSY \
@@ -360,6 +364,49 @@
       "private_key_pem": "-----BEGIN PRIVATE KEY-----\n...",
       "public_key_jwk": { ... },
       "private_key_jwk": { ... }
+  }
+  ```
+
+  #### POST /api/generate （密钥生成，Web UI）
+
+  > 完整 URL：https://encrypt.yangzifun.org/api/generate
+  >
+  > Web UI 密钥生成接口，**需要 Turnstile 人机验证**。从浏览器页面中点击"生成密钥"按钮使用。
+
+  **请求体：**
+  ```json
+  {
+      "cf-turnstile-response": "xxx"
+  }
+  ```
+  - `cf-turnstile-response`：Turnstile 人机验证 token（由浏览器端 Turnstile Widget 自动生成）
+
+  **环境变量：**
+  | 变量名 | 用途 |
+  |--------|------|
+  | `TURNSTILE_SITE_KEY` | 前端 Turnstile Widget 的 site key |
+  | `TURNSTILE_SECRET_KEY` | 后端验证 Turnstile token 的 secret key |
+
+  > 若未配置 Turnstile 环境变量，则跳过验证（可用于开发测试环境）。
+
+  **响应：**
+  ```json
+  {
+      "status": "success",
+      "message": "UUID 和 RSA 密钥对生成并保存成功。",
+      "uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...",
+      "private_key_pem": "-----BEGIN PRIVATE KEY-----\n...",
+      "public_key_jwk": { ... },
+      "private_key_jwk": { ... }
+  }
+  ```
+
+  **验证失败响应：**
+  ```json
+  {
+      "status": "error",
+      "message": "人机验证失败，请重试"
   }
   ```
 
