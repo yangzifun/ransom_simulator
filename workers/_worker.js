@@ -204,6 +204,45 @@ function getHtmlPage() {
                   }
               });
           }
+          const generateBtn = document.getElementById('generateKeyBtn');
+          const generateResult = document.getElementById('generate-result');
+          if (generateBtn) {
+              generateBtn.addEventListener('click', async function() {
+                  generateBtn.disabled = true;
+                  generateBtn.innerHTML = '<i data-lucide="loader-circle" class="w-5 h-5 mr-3 animate-spin"></i> 正在生成...';
+                  lucide.createIcons();
+                  generateResult.style.display = 'block';
+                  generateResult.innerHTML = \`
+                    <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 rounded">
+                      <div class="flex items-center">
+                        <i data-lucide="loader-circle" class="w-5 h-5 mr-3 animate-spin"></i>
+                        <span>正在生成密钥，请稍候...</span>
+                      </div>
+                    </div>
+                  \`;
+                  lucide.createIcons();
+                  try {
+                      const response = await fetch('/api/generate', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({})
+                      });
+                      const data = await response.json();
+                      if (data.status === 'success') {
+                          renderGenerateSuccess(generateResult, data);
+                          initDashboard();
+                      } else {
+                          showError(generateResult, data.message);
+                      }
+                  } catch (error) {
+                      showError(generateResult, '网络错误: ' + error.message);
+                  } finally {
+                      generateBtn.disabled = false;
+                      generateBtn.innerHTML = '<i data-lucide="sparkles" class="w-5 h-5 mr-3"></i> 生成密钥';
+                      lucide.createIcons();
+                  }
+              });
+          }
       });
       let chartInstance = null;
       let currentRange = '1m';
@@ -381,6 +420,35 @@ function getHtmlPage() {
            container.innerHTML = html;
            lucide.createIcons();
       }
+      function renderGenerateSuccess(container, data) {
+           let html = \`
+             <div class="mb-6">
+               <div class="flex items-center justify-center mb-4">
+                 <i data-lucide="check-circle" class="w-6 h-6 mr-2 text-green-500"></i>
+                 <h3 class="text-xl font-semibold text-gray-800">密钥生成成功</h3>
+               </div>
+               <div class="bg-green-50 border-l-4 border-green-500 text-green-700 p-4 rounded mb-4">
+                 <strong>UUID:</strong> \${escapeHtml(data.uuid)}
+               </div>
+           \`;
+           if (data.public_key_pem) {
+               html += buildKeyField('公钥内容', 'genPublicKey', data.public_key_pem, data.uuid, 'public');
+           }
+           if (data.private_key_pem) {
+               html += buildKeyField('私钥内容', 'genPrivateKey', data.private_key_pem, data.uuid, 'private');
+               html += \`
+                 <div class="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded mt-4">
+                   <div class="flex items-center">
+                     <i data-lucide="alert-circle" class="w-5 h-5 mr-2"></i>
+                     <span><strong>请务必妥善保管私钥。</strong>私钥仅在此次生成时可见，刷新页面后将无法找回。</span>
+                   </div>
+                 </div>
+               \`;
+           }
+           html += \`</div>\`;
+           container.innerHTML = html;
+           lucide.createIcons();
+      }
       function buildKeyField(label, id, content, uuid, type) {
           const rows = type === 'private' ? 12 : 8;
           return \`
@@ -519,18 +587,39 @@ function getHtmlPage() {
             <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 mb-8 text-left">
                 <div class="flex items-center justify-center mb-6">
                     <i data-lucide="key" class="w-6 h-6 mr-3 text-gray-600"></i>
-                    <h2 class="text-2xl font-semibold text-gray-700">密钥查询</h2>
+                    <h2 class="text-2xl font-semibold text-gray-700">密钥管理</h2>
                 </div>
-                <form id="keyQueryForm" class="space-y-6">
-                    <div>
-                        <label for="uuidInput" class="block text-sm font-medium text-gray-700 mb-2">输入 UUID:</label>
-                        <input type="text" id="uuidInput" name="uuid" placeholder="例如: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required class="w-full px-4 py-3 border-2 border-gray-400 rounded font-mono text-sm focus:outline-none focus:border-gray-600">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <!-- 左侧：密钥查询 -->
+                    <div class="border-r-0 lg:border-r border-gray-200 pr-0 lg:pr-6">
+                        <div class="flex items-center mb-4">
+                            <i data-lucide="search" class="w-5 h-5 mr-2 text-gray-600"></i>
+                            <h3 class="text-lg font-semibold text-gray-700">密钥查询</h3>
+                        </div>
+                        <form id="keyQueryForm" class="space-y-4">
+                            <div>
+                                <label for="uuidInput" class="block text-sm font-medium text-gray-700 mb-2">输入 UUID:</label>
+                                <input type="text" id="uuidInput" name="uuid" placeholder="例如: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required class="w-full px-4 py-3 border-2 border-gray-400 rounded font-mono text-sm focus:outline-none focus:border-gray-600">
+                            </div>
+                            <button type="submit" class="w-full flex items-center justify-center px-6 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded font-medium hover:bg-gray-800 transition-colors">
+                                <i data-lucide="send" class="w-5 h-5 mr-3"></i> 查询密钥
+                            </button>
+                        </form>
+                        <div id="query-result" class="mt-6" style="display: none;"></div>
                     </div>
-                    <button type="submit" class="w-full flex items-center justify-center px-6 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded font-medium hover:bg-gray-800 transition-colors">
-                        <i data-lucide="send" class="w-5 h-5 mr-3"></i> 查询密钥
-                    </button>
-                </form>
-                <div id="query-result" class="mt-6" style="display: none;"></div>
+                    <!-- 右侧：密钥生成 -->
+                    <div class="pl-0 lg:pl-6">
+                        <div class="flex items-center mb-4">
+                            <i data-lucide="plus-circle" class="w-5 h-5 mr-2 text-gray-600"></i>
+                            <h3 class="text-lg font-semibold text-gray-700">生成密钥</h3>
+                        </div>
+                        <p class="text-sm text-gray-500 mb-4">点击下方按钮生成新的 RSA 密钥对及 UUID。</p>
+                        <button type="button" id="generateKeyBtn" class="w-full flex items-center justify-center px-6 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded font-medium hover:bg-gray-800 transition-colors">
+                            <i data-lucide="sparkles" class="w-5 h-5 mr-3"></i> 生成密钥
+                        </button>
+                        <div id="generate-result" class="mt-6" style="display: none;"></div>
+                    </div>
+                </div>
             </div>
 
             <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 mb-8 text-left">
@@ -739,10 +828,16 @@ export default {
             });
         }
 
-        // POST 请求 → 仅允许通过安全路径访问密钥生成接口
+        // POST 请求 → 安全路径或 /api/generate 均可访问密钥生成接口
         if (request.method === 'POST') {
-            // 安全路径检查：优先使用环境变量 SECRET_PATH，未设置时使用默认值 DEFAULT_SECRET_PATH
             const requestPath = url.pathname.replace(/\/+$/, '') || '/';
+
+            // /api/generate 路径：无需安全校验，直接允许
+            if (requestPath === '/api/generate') {
+                return handleKeyGeneration(request, env);
+            }
+
+            // 安全路径检查：优先使用环境变量 SECRET_PATH，未设置时使用默认值 DEFAULT_SECRET_PATH
             const secretPath = env.SECRET_PATH || DEFAULT_SECRET_PATH;
             const expectedPath = '/' + secretPath.replace(/^\/+|\/+$/g, '');
             if (requestPath !== expectedPath) {
