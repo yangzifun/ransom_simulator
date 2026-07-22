@@ -462,7 +462,7 @@ function getHtmlPage() {
       html { font-size: 87.5%; }
       body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
       .chart-container { position: relative; height: 200px; }
-      .platform-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+      /* .platform-grid 已移除，改用 Tailwind grid-cols 响应式类 */
       @media (max-width: 768px) { .stats-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -472,7 +472,7 @@ function getHtmlPage() {
             <div class="mb-10">
                 <div class="flex items-center justify-center mb-4">
                     <i data-lucide="shield" class="w-10 h-10 mr-4 text-gray-600"></i>
-                    <h1 class="text-3xl sm:text-4xl font-bold text-gray-700">密钥管理中心 :V3.2</h1>
+                    <h1 class="text-3xl sm:text-4xl font-bold text-gray-700">密钥管理中心</h1>
                 </div>
                 <p class="text-gray-500 text-lg mb-8 min-h-[1.2em]">安全、跨平台的文件加密解决方案与数据看板</p>
             </div>
@@ -538,48 +538,80 @@ function getHtmlPage() {
                     <i data-lucide="download" class="w-6 h-6 mr-3 text-gray-600"></i>
                     <h2 class="text-2xl font-semibold text-gray-700">下载组件</h2>
                 </div>
-                <div class="grid platform-grid gap-6 mb-10">
-                    <div class="border border-red-200 rounded-lg p-5 bg-red-50 flex flex-col">
-                        <div class="flex items-center justify-center mb-3">
-                            <i data-lucide="biohazard" class="w-6 h-6 mr-3 text-red-600"></i>
-                            <h3 class="text-xl font-medium text-red-700">Windows 勒索程序</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
+                    <!-- Windows -->
+                    <div class="relative border border-blue-200 rounded-xl p-6 bg-gradient-to-b from-blue-50 to-white shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
+                        <span class="absolute top-3 right-3 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">⚠ 危险</span>
+                        <div class="flex flex-col items-center mb-4">
+                            <div class="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                                <i data-lucide="monitor" class="w-7 h-7 text-blue-600"></i>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800">Windows</h3>
+                            <p class="text-xs text-gray-500 mt-1">勒索模拟程序</p>
                         </div>
-                        <p class="text-center text-sm text-red-500 mb-4">⚠ 危险</p>
-                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator.exe" class="flex items-center justify-center px-4 py-3 bg-red-600 text-white border-2 border-red-500 rounded hover:bg-red-700 transition-colors mt-auto" download>
-                            <i data-lucide="download" class="w-5 h-5 mr-3"></i>
+                        <div class="flex items-center justify-center mb-4 text-xs text-gray-500 space-x-2">
+                            <i data-lucide="hard-drive" class="w-3.5 h-3.5"></i>
+                            <span>x86_64 .exe</span>
+                        </div>
+                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator.exe" class="flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-300 shadow-md hover:shadow-lg mt-auto" download>
+                            <i data-lucide="download" class="w-4 h-4 mr-2"></i>
                             <span class="text-sm font-medium">下载 .exe</span>
                         </a>
                     </div>
-                    <div class="border border-red-200 rounded-lg p-5 bg-red-50 flex flex-col">
-                        <div class="flex items-center justify-center mb-3">
-                            <i data-lucide="biohazard" class="w-6 h-6 mr-3 text-red-600"></i>
-                            <h3 class="text-xl font-medium text-red-700">Linux 勒索程序</h3>
+                    <!-- Linux 动态链接 -->
+                    <div class="relative border border-amber-200 rounded-xl p-6 bg-gradient-to-b from-amber-50 to-white shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
+                        <span class="absolute top-3 right-3 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">⚠ 危险</span>
+                        <div class="flex flex-col items-center mb-4">
+                            <div class="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                                <i data-lucide="terminal" class="w-7 h-7 text-amber-600"></i>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800">Linux</h3>
+                            <p class="text-xs text-gray-500 mt-1">动态链接版</p>
                         </div>
-                        <p class="text-center text-sm text-red-500 mb-4">⚠ 危险</p>
-                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator_linux" class="flex items-center justify-center px-4 py-3 bg-red-600 text-white border-2 border-red-500 rounded hover:bg-red-700 transition-colors mt-auto" download>
-                            <i data-lucide="download" class="w-5 h-5 mr-3"></i>
-                            <span class="text-sm font-medium">下载 Linux 动态链接版</span>
+                        <div class="flex items-center justify-center mb-4 text-xs text-gray-500 space-x-2">
+                            <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
+                            <span>x86_64 ELF</span>
+                        </div>
+                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator_linux" class="flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-lg hover:from-amber-600 hover:to-amber-700 transition-all duration-300 shadow-md hover:shadow-lg mt-auto" download>
+                            <i data-lucide="download" class="w-4 h-4 mr-2"></i>
+                            <span class="text-sm font-medium">下载动态链接版</span>
                         </a>
                     </div>
-                    <div class="border border-red-200 rounded-lg p-5 bg-red-50 flex flex-col">
-                        <div class="flex items-center justify-center mb-3">
-                            <i data-lucide="biohazard" class="w-6 h-6 mr-3 text-red-600"></i>
-                            <h3 class="text-xl font-medium text-red-700">Linux 勒索程序</h3>
+                    <!-- Linux 静态编译 -->
+                    <div class="relative border border-emerald-200 rounded-xl p-6 bg-gradient-to-b from-emerald-50 to-white shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
+                        <span class="absolute top-3 right-3 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">⚠ 危险</span>
+                        <div class="flex flex-col items-center mb-4">
+                            <div class="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                                <i data-lucide="box" class="w-7 h-7 text-emerald-600"></i>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800">Linux</h3>
+                            <p class="text-xs text-gray-500 mt-1">静态编译版</p>
                         </div>
-                        <p class="text-center text-sm text-red-500 mb-4">静态编译</p>
-                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator_linux_static" class="flex items-center justify-center px-4 py-3 bg-red-600 text-white border-2 border-red-500 rounded hover:bg-red-700 transition-colors mt-auto" download>
-                            <i data-lucide="download" class="w-5 h-5 mr-3"></i>
-                            <span class="text-sm font-medium">下载 Linux 静态编译版</span>
+                        <div class="flex items-center justify-center mb-4 text-xs text-gray-500 space-x-2">
+                            <i data-lucide="package" class="w-3.5 h-3.5"></i>
+                            <span>静态 x86_64</span>
+                        </div>
+                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator_linux_static" class="flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-300 shadow-md hover:shadow-lg mt-auto" download>
+                            <i data-lucide="download" class="w-4 h-4 mr-2"></i>
+                            <span class="text-sm font-medium">下载静态编译版</span>
                         </a>
                     </div>
-                    <div class="border border-red-200 rounded-lg p-5 bg-red-50 flex flex-col">
-                        <div class="flex items-center justify-center mb-3">
-                            <i data-lucide="biohazard" class="w-6 h-6 mr-3 text-red-600"></i>
-                            <h3 class="text-xl font-medium text-red-700">macOS 勒索程序</h3>
+                    <!-- macOS -->
+                    <div class="relative border border-gray-300 rounded-xl p-6 bg-gradient-to-b from-gray-50 to-white shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
+                        <span class="absolute top-3 right-3 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">⚠ 危险</span>
+                        <div class="flex flex-col items-center mb-4">
+                            <div class="w-14 h-14 rounded-full bg-gray-200 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                                <i data-lucide="apple" class="w-7 h-7 text-gray-700"></i>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800">macOS</h3>
+                            <p class="text-xs text-gray-500 mt-1">勒索模拟程序</p>
                         </div>
-                        <p class="text-center text-sm text-red-500 mb-4">⚠ 危险</p>
-                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator_macos" class="flex items-center justify-center px-4 py-3 bg-red-600 text-white border-2 border-red-500 rounded hover:bg-red-700 transition-colors mt-auto" download>
-                            <i data-lucide="download" class="w-5 h-5 mr-3"></i>
+                        <div class="flex items-center justify-center mb-4 text-xs text-gray-500 space-x-2">
+                            <i data-lucide="hard-drive" class="w-3.5 h-3.5"></i>
+                            <span>通用二进制</span>
+                        </div>
+                        <a href="https://s3.yangzifun.org/crypt/ransom_simulator_macos" class="flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-gray-700 to-gray-800 text-white rounded-lg hover:from-gray-800 hover:to-gray-900 transition-all duration-300 shadow-md hover:shadow-lg mt-auto" download>
+                            <i data-lucide="download" class="w-4 h-4 mr-2"></i>
                             <span class="text-sm font-medium">下载 macOS 版</span>
                         </a>
                     </div>
