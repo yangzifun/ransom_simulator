@@ -541,41 +541,6 @@ function getHtmlPage() {
                 <div class="grid platform-grid gap-6 mb-10">
                     <div class="border border-gray-200 rounded-lg p-5 bg-white flex flex-col">
                         <div class="flex items-center justify-center mb-4">
-                            <i data-lucide="apple" class="w-6 h-6 mr-3"></i>
-                            <h3 class="text-xl font-medium text-gray-700">macOS</h3>
-                        </div>
-                        <div class="space-y-3 flex-grow">
-                            <a href="https://s3.yangzifun.org/crypt/encrypt_osx.sh" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="file-archive" class="w-5 h-5 mr-3"></i><span class="text-sm">单个文件加密脚本</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/batch_encrypt_osx.sh" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="file-zipper" class="w-5 h-5 mr-3"></i><span class="text-sm">批量文件加密脚本</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/encrypt_folder_osx.sh" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="folder-plus" class="w-5 h-5 mr-3"></i><span class="text-sm">目录加密脚本</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/decrypt_osx.sh" class="flex items-center px-4 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded hover:bg-gray-800 transition-colors" download><i data-lucide="lock-open" class="w-5 h-5 mr-3"></i><span class="text-sm">解密脚本</span></a>
-                        </div>
-                    </div>
-                    <div class="border border-gray-200 rounded-lg p-5 bg-white flex flex-col">
-                        <div class="flex items-center justify-center mb-4">
-                            <i data-lucide="terminal" class="w-6 h-6 mr-3"></i>
-                            <h3 class="text-xl font-medium text-gray-700">Linux</h3>
-                        </div>
-                        <div class="space-y-3 flex-grow">
-                            <a href="https://s3.yangzifun.org/crypt/encrypt_linux.sh" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="file-archive" class="w-5 h-5 mr-3"></i><span class="text-sm">单个文件加密脚本</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/batch_encrypt_linux.sh" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="file-zipper" class="w-5 h-5 mr-3"></i><span class="text-sm">批量文件加密脚本</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/encrypt_folder_linux.sh" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="folder-plus" class="w-5 h-5 mr-3"></i><span class="text-sm">目录加密脚本</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/decrypt_linux.sh" class="flex items-center px-4 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded hover:bg-gray-800 transition-colors" download><i data-lucide="lock-open" class="w-5 h-5 mr-3"></i><span class="text-sm">解密脚本</span></a>
-                        </div>
-                    </div>
-                    <div class="border border-gray-200 rounded-lg p-5 bg-white flex flex-col">
-                        <div class="flex items-center justify-center mb-4">
-                            <i data-lucide="monitor" class="w-6 h-6 mr-3"></i>
-                            <h3 class="text-xl font-medium text-gray-700">Windows</h3>
-                        </div>
-                        <div class="space-y-3 flex-grow">
-                            <a href="https://s3.yangzifun.org/crypt/CryptoApp-Windows-x86_64.exe" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="monitor" class="w-5 h-5 mr-3"></i><span class="text-sm">Windows 加解密</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/CryptoApp-Linux-x86_64" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="terminal" class="w-5 h-5 mr-3"></i><span class="text-sm">Linux 加解密</span></a>
-                            <a href="https://s3.yangzifun.org/crypt/CryptoApp-macOS-x86_64" class="flex items-center px-4 py-3 bg-gray-200 text-gray-700 border-2 border-gray-400 rounded hover:bg-gray-300 transition-colors" download><i data-lucide="apple" class="w-5 h-5 mr-3"></i><span class="text-sm">macOS 加解密</span></a>
-                        </div>
-                    </div>
-                    <div class="border border-gray-200 rounded-lg p-5 bg-white flex flex-col">
-                        <div class="flex items-center justify-center mb-4">
                             <i data-lucide="skull" class="w-6 h-6 mr-3"></i>
                             <h3 class="text-xl font-medium text-gray-700">测试工具</h3>
                         </div>
@@ -589,7 +554,6 @@ function getHtmlPage() {
                 <h2 class="text-xl font-semibold text-gray-700 text-center mb-6">相关链接</h2>
                 <div class="flex flex-col sm:flex-row border-2 border-gray-400 rounded overflow-hidden max-w-2xl mx-auto">
                     <a href="https://github.com/yangzifun/ransom_simulator" target="_blank" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-900 text-white hover:bg-black transition-colors"><i data-lucide="github" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">项目GitHub</span></a>
-                    <a href="https://bbs.yangzihome.space/archives/encrypt" target="_blank" rel="noopener noreferrer" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-200 text-gray-700 border-0 sm:border-l-2 border-gray-400 hover:bg-gray-300 transition-colors"><i data-lucide="book" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">加密文档</span></a>
                     <a href="https://bbs.yangzihome.space/archives/extortion" target="_blank" rel="noopener noreferrer" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-200 text-gray-700 border-0 sm:border-l-2 border-gray-400 hover:bg-gray-300 transition-colors"><i data-lucide="book" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">勒索文档</span></a>
                 </div>
             </div>
