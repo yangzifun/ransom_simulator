@@ -1,6 +1,6 @@
 # 勒索软件模拟器 (Ransomware Simulator)
 
-  [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white) ![Version](https://img.shields.io/badge/Version-v3.3-blue.svg)
+  [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white) ![Version](https://img.shields.io/badge/Version-v3.4-blue.svg)
 
   > **安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
   >
@@ -91,14 +91,19 @@
 
   ## ⚙️ 命令行参数详解
 
-  | 参数     | 类型   | 描述                       | Windows | Linux | macOS | 默认值       | 备注                       |
-  | -------- | ------ | -------------------------- | ------- | ----- | ----- | ------------ | -------------------------- |
-  | -dir     | string | 指定攻击目标（目录或文件） | ✅       | ✅     | ✅     | 系统根目录   | 逗号分隔多个目录           |
-  | -ext     | string | 指定要加密的文件扩展名     | ✅       | ✅     | ✅     | 预定义扩展名 | 如：.txt,.pdf,.docx        |
-  | -workers | int    | 并发Worker线程数量         | ✅       | ✅     | ✅     | CPU核心数    | 建议根据系统资源调整       |
-  | -dry-run | bool   | 演习模式，不实际加密       | ✅       | ✅     | ✅     | false        | 用于测试和演示             |
-  | -remove  | bool   | 加密后删除原文件           | ✅       | ✅     | ✅     | false        | 高危操作，谨慎使用         |
-  | -log     | bool   | 启用日志功能               | ✅       | ✅     | ✅     | false        | 日志文件输出到程序所在目录 |
+  | 参数               | 类型   | 描述                                | Windows | Linux | macOS | 默认值       | 备注                             |
+  | ------------------ | ------ | ----------------------------------- | ------- | ----- | ----- | ------------ | -------------------------------- |
+  | -dir               | string | 指定攻击目标（目录或文件）          | ✅       | ✅     | ✅     | 系统根目录   | 逗号分隔多个目录                 |
+  | -ext               | string | 指定要加密的文件扩展名              | ✅       | ✅     | ✅     | 预定义扩展名 | 如：.txt,.pdf,.docx              |
+  | -workers           | int    | 并发Worker线程数量                  | ✅       | ✅     | ✅     | CPU核心数    | 建议根据系统资源调整             |
+  | -dry-run           | bool   | 演习模式，不实际加密                | ✅       | ✅     | ✅     | false        | 用于测试和演示                   |
+  | -remove            | bool   | 加密后删除原文件                    | ✅       | ✅     | ✅     | false        | 高危操作，谨慎使用               |
+  | -log               | bool   | 启用日志功能                        | ✅       | ✅     | ✅     | false        | 日志文件输出到程序所在目录       |
+  | --stealth          | bool   | 隐秘模式，完全跳过阶段2破坏性操作   | ❌       | ✅     | ✅     | false        | 仅执行文件加密，不触碰系统进程   |
+  | --no-stop-services | bool   | 跳过停止数据库和安全服务            | ❌       | ✅     | ✅     | false        | 降低安全软件告警风险             |
+  | --no-kill-procs    | bool   | 跳过终止进程操作                    | ❌       | ✅     | ✅     | false        | 避免 process kill 行为特征       |
+  | --no-clear-logs    | bool   | 跳过清除日志操作                    | ❌       | ✅     | ✅     | false        | 避免日志清除行为触发告警         |
+  | --aggressive-delay | int    | 各操作间随机延迟上限（毫秒）        | ❌       | ✅     | ✅     | 0            | 打乱行为时序，降低检测特征，0=不延迟 |
 
   ## 🔐 密钥管理
 
@@ -192,6 +197,23 @@
   # 日志文件便于事后分析和汇报
   ```
 
+  ### 场景5：隐秘模式测试（v3.4 新增）
+  ```bash
+  # 完全跳过阶段2，仅执行文件加密，不触碰任何系统进程
+  ./ransom_simulator_linux -log --stealth -dir="/tmp/test" -ext=".txt,.doc"
+  # 效果：不调用 systemctl、不 kill 进程、不清理日志，最大限度降低安全软件告警
+  ```
+
+  ### 场景6：低特征模式测试（v3.4 新增）
+  ```bash
+  # 逐步放开阶段2操作，配合随机延迟打乱行为时序
+  ./ransom_simulator_linux -log \
+    --no-clear-logs --no-kill-procs \
+    --aggressive-delay=3000 \
+    -dir="/tmp/test"
+  # 效果：跳过日志清除和进程终止，操作间随机延迟 0-3 秒，避免触发时序检测
+  ```
+
   ## 🔧 技术细节
 
   ### 密钥获取策略
@@ -207,6 +229,7 @@
   - **数据库服务**：MySQL、PostgreSQL、MongoDB、Redis、Oracle
   - **安全软件**：阿里云安骑士、ClamAV、rkhunter、ossec
   - **监控工具**：Zabbix、Nagios、Cacti
+  - **v3.4 低特征改进**：优先使用 SIGTERM 进程信号（`pgrep` + `kill`），`systemctl stop` 仅作为回退方案；移除 `systemctl disable`
 
   #### 2. 内存清理技术
   - **数据库缓存**：MySQL缓存刷新、PostgreSQL缓存清理
@@ -214,14 +237,37 @@
   - **网络缓存**：ARP缓存、DNS缓存清理
 
   #### 3. 进程守护解除
-  - **进程管理器**：systemd、init、upstart、supervisord
+  - **进程管理器**：supervisord、monit 等非系统级守护进程
   - **定时任务**：cron、atd
-  - **监控进程**：各种守护进程
+  - **v3.4 低特征改进**：移除对 `systemd`、`init`、`upstart`、`runit` 等系统级进程的 `pkill -9` 操作，仅对非系统级守护进程尝试 `systemctl stop`
 
   #### 4. 数据库链接解挂
-  - **客户端进程**：mysql、psql、mongo、redis-cli
+  - **客户端进程**：mysql、psql、mongo、redis-cli（SIGTERM 信号）
   - **网络连接**：关闭数据库端口（3306、5432等）
-  - **链接清理**：杀死所有数据库连接
+  - **v3.4 低特征改进**：移除 `ss -K` 全网络连接关闭；`pkill -9` 改为 `pkill`（SIGTERM）
+
+  ### 低特征模式（v3.4 新增）
+
+  为降低安全软件（如阿里云安骑士、多维攻击识别引擎）的主动防御告警，v3.4 引入了低特征对抗机制：
+
+  | 原行为（高特征） | v3.4 低特征替代 | 风险评估 |
+  |---|---|---|
+  | `systemctl stop postgresql` | `pgrep -x` → `kill <pid>`（SIGTERM） | systemctl 调用是强告警特征 |
+  | `systemctl disable` 服务 | 已移除 | 修改开机启动项极易触发告警 |
+  | `pkill -9 -f` 暴力杀进程 | `pkill -f`（SIGTERM，无 `-9`） | `-9` 信号是勒索软件典型特征 |
+  | `pkill -9 systemd/init` | 已移除 | 系统级进程杀操作是最高危告警 |
+  | `ss -K` 全网络连接关闭 | 已移除 | 大规模断网行为触发网络层检测 |
+  | 固定延迟顺序执行 | `--aggressive-delay` 随机延迟 | 打乱时序特征，绕过时序检测 |
+
+  **参数组合推荐：**
+
+  | 场景 | 参数组合 | 安全等级 |
+  |---|---|---|
+  | 最大隐蔽 | `--stealth` | 🟢 最低风险 |
+  | 隐藏进程/日志操作 | `--no-kill-procs --no-clear-logs` | 🟡 中等风险 |
+  | 隐藏服务操作 | `--no-stop-services` | 🟡 中等风险 |
+  | 时序混淆 | `--aggressive-delay=3000` | 🟢 增强隐蔽 |
+  | 完整阶段2（默认） | 无额外参数 | 🔴 高风险 |
 
   ### 增强文件识别
 
@@ -292,7 +338,7 @@
 
   | **Tactic (战术)** | **ID** | **新增模拟行为**                                             |
   | ----------------- | ------ | ------------------------------------------------------------ |
-  | **防御规避**      | TA0005 | **服务停止攻击**：停止数据库和安全服务<br>**内存清理**：清理数据库缓存和系统内存<br>**进程守护解除**：停止守护进程和定时任务 |
+  | **防御规避**      | TA0005 | **服务停止攻击**：停止数据库和安全服务<br>**内存清理**：清理数据库缓存和系统内存<br>**进程守护解除**：停止守护进程和定时任务<br>**v3.4 低特征对抗**：SIGTERM 替代 SIGKILL、移除 systemctl disable、随机延迟打乱时序 |
   | **持久化**        | TA0003 | **增强互斥锁**：强制释放旧锁文件，自动重置状态               |
   | **发现**          | TA0007 | **增强文件识别**：支持数据库文件、配置文件、备份文件<br>**数据库发现**：自动扫描数据库数据目录 |
   | **横向移动**      | TA0008 | **数据库攻击**：终止数据库连接，解挂网络链接                 |
