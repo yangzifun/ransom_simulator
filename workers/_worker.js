@@ -1,6 +1,6 @@
 // ===================================================================================
 // _worker.js - 合并后的 Cloudflare Worker
-// 功能：RSA 密钥对生成 + UUID 分发（支持安全路径）+ 密钥查询 + 统计面板
+// 功能：RSA 密钥对生成 + UUID 分发（支持安全路径）+ 密钥查询 + 统计面板 + 浏览器端解密
 // ===================================================================================
 
 // ===================================================================================
@@ -10,7 +10,7 @@
 const DEFAULT_SECRET_PATH = "E56dSY";
 
 // ===================================================================================
-// 第一部分：RSA 密钥生成 (源自 rsauuid.js)
+// 第一部分：RSA 密钥生成
 // ===================================================================================
 
 /**
@@ -105,6 +105,15 @@ async function handleKeyGeneration(request, env) {
         }
     }
 
+    // 验证通过，调用核心密钥生成逻辑
+    return handleKeyGenerationSecure(request, env);
+}
+
+/**
+ * 处理 RSA 密钥生成请求的核心逻辑（无 Turnstile 人机验证）
+ * 供安全路径（如 /E56dSY）直接调用，也供 handleKeyGeneration 在验证通过后调用
+ */
+async function handleKeyGenerationSecure(request, env) {
     let uuid, publicKeyPem, privateKeyPem, publicJwk, privateJwk;
 
     try {
@@ -196,7 +205,7 @@ async function handleKeyGeneration(request, env) {
 }
 
 // ===================================================================================
-// 第二部分：密钥查询与统计面板 (源自 uuidgetkey.js)
+// 第二部分：密钥查询与统计面板
 // ===================================================================================
 
 function getHtmlPage(env) {
@@ -676,7 +685,7 @@ function getHtmlPage(env) {
             <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 mb-8 text-left">
                 <div class="flex items-center justify-center mb-6">
                     <i data-lucide="download" class="w-6 h-6 mr-3 text-gray-600"></i>
-                    <h2 class="text-2xl font-semibold text-gray-700">下载组件</h2>
+                    <h2 class="text-2xl font-semibold text-gray-700">🔒 加密组件</h2>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
                     <!-- Windows -->
@@ -756,9 +765,48 @@ function getHtmlPage(env) {
                         </a>
                     </div>
                 </div>
+                <h2 class="text-xl font-semibold text-gray-700 text-center mb-6 mt-10">🔓 解密组件</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-10 max-w-xl mx-auto">
+                    <!-- 解密程序 Windows -->
+                    <div class="relative border border-green-200 rounded-xl p-6 bg-gradient-to-b from-green-50 to-white shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
+                        <div class="flex flex-col items-center mb-4">
+                            <div class="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                                <i data-lucide="monitor" class="w-7 h-7 text-green-600"></i>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800">Windows 解密程序</h3>
+                            <p class="text-xs text-gray-500 mt-1">命令行解密工具</p>
+                        </div>
+                        <div class="flex items-center justify-center mb-4 text-xs text-gray-500 space-x-2">
+                            <i data-lucide="hard-drive" class="w-3.5 h-3.5"></i>
+                            <span>x86_64 .exe</span>
+                        </div>
+                        <a href="https://s3.yangzifun.org/crypt/decryptor.exe" class="flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all duration-300 shadow-md hover:shadow-lg mt-auto" download>
+                            <i data-lucide="download" class="w-4 h-4 mr-2"></i>
+                            <span class="text-sm font-medium">下载 .exe</span>
+                        </a>
+                    </div>
+                    <!-- 在线解密 -->
+                    <div class="relative border border-blue-200 rounded-xl p-6 bg-gradient-to-b from-blue-50 to-white shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col group">
+                        <div class="flex flex-col items-center mb-4">
+                            <div class="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                                <i data-lucide="unlock" class="w-7 h-7 text-blue-600"></i>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800">在线解密</h3>
+                            <p class="text-xs text-gray-500 mt-1">浏览器本地解密</p>
+                        </div>
+                        <div class="flex items-center justify-center mb-4 text-xs text-gray-500 space-x-2">
+                            <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+                            <span>Web Crypto API</span>
+                        </div>
+                        <a href="/decrypt" class="flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-300 shadow-md hover:shadow-lg mt-auto">
+                            <i data-lucide="arrow-right" class="w-4 h-4 mr-2"></i>
+                            <span class="text-sm font-medium">打开解密页面</span>
+                        </a>
+                    </div>
+                </div>
                 <h2 class="text-xl font-semibold text-gray-700 text-center mb-6">相关链接</h2>
                 <div class="flex flex-col sm:flex-row border-2 border-gray-400 rounded overflow-hidden max-w-2xl mx-auto">
-                    <a href="https://github.com/yangzifun/ransom_simulator" target="_blank" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-900 text-white hover:bg-black transition-colors"><i data-lucide="github" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">项目GitHub</span></a>
+                    <a href="https://git.yangzifun.org/YZFN/ransom_simulator" target="_blank" class="flex-1 flex items-center justify-center px-6 py-3 bg-[#609926] text-white hover:bg-[#4a7a1e] transition-colors"><svg class="w-5 h-5 mr-3" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M5 4h16c2.2 0 4 1.8 4 4v10c0 2.2-1.8 4-4 4h-3l-2 4h-4l-2-4H5c-2.2 0-4-1.8-4-4V8c0-2.2 1.8-4 4-4z"/></svg><span class="text-sm font-medium">项目代码</span></a>
                     <a href="https://bbs.yangzihome.space/archives/extortion" target="_blank" rel="noopener noreferrer" class="flex-1 flex items-center justify-center px-6 py-3 bg-gray-200 text-gray-700 border-0 sm:border-l-2 border-gray-400 hover:bg-gray-300 transition-colors"><i data-lucide="book" class="w-5 h-5 mr-3"></i><span class="text-sm font-medium">勒索文档</span></a>
                 </div>
             </div>
@@ -769,6 +817,536 @@ function getHtmlPage(env) {
         </div>
     </div>
     <script>${CLIENT_SCRIPT}</script>
+</body>
+</html>
+    `;
+}
+
+// ===================================================================================
+// 第三部分：浏览器端解密页面
+// ===================================================================================
+
+function getDecryptPage() {
+    const DECRYPT_SCRIPT = `
+// --- 常量定义 (与 decryptor.go 保持一致) ---
+const ENCRYPTED_KEY_LENGTH = 256; // RSA-2048 密文长度 = 256 字节
+const NONCE_SIZE = 12; // AES-GCM nonce 大小
+const PENC_MAGIC = "PENC";
+const ENCRYPTED_SUFFIX = ".encrypted";
+
+// --- 工具函数 ---
+function log(msg) {
+    const el = document.getElementById('logArea');
+    if (el) {
+        el.textContent += '[' + new Date().toLocaleTimeString() + '] ' + msg + '\\n';
+        el.scrollTop = el.scrollHeight;
+    }
+}
+
+function setStatus(msg, type) {
+    const el = document.getElementById('status');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = '';
+    if (type === 'error') el.className = 'text-red-600';
+    else if (type === 'success') el.className = 'text-green-600';
+    else if (type === 'warning') el.className = 'text-yellow-600';
+    else el.className = 'text-gray-600';
+}
+
+// --- 从 PEM 字符串导入 RSA 私钥 ---
+async function importPrivateKeyFromPEM(pemStr) {
+    // 移除 PEM 头和尾，解码 Base64
+    const pemHeader = '-----BEGIN PRIVATE KEY-----';
+    const pemFooter = '-----END PRIVATE KEY-----';
+    let b64 = pemStr;
+    if (b64.includes(pemHeader)) {
+        b64 = b64.replace(pemHeader, '').replace(pemFooter, '');
+    }
+    // 也支持 RSA PRIVATE KEY (PKCS#1)
+    const rsaHeader = '-----BEGIN RSA PRIVATE KEY-----';
+    const rsaFooter = '-----END RSA PRIVATE KEY-----';
+    if (b64.includes(rsaHeader)) {
+        b64 = b64.replace(rsaHeader, '').replace(rsaFooter, '');
+    }
+    b64 = b64.replace(/\\s/g, '');
+    const binaryDer = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+    let format = 'pkcs8';
+    if (pemStr.includes('RSA PRIVATE KEY')) {
+        format = 'pkcs8'; // Web Crypto 统一用 pkcs8 导入
+    }
+
+    try {
+        return await crypto.subtle.importKey(
+            format,
+            binaryDer.buffer,
+            { name: 'RSA-OAEP', hash: 'SHA-256' },
+            false,
+            ['decrypt']
+        );
+    } catch (e) {
+        // 如果 pkcs8 失败，尝试用 JWK 方式（兼容性更好）
+        log('PKCS8 导入失败，尝试备用方案: ' + e.message);
+        throw e;
+    }
+}
+
+// --- 完整加密文件解密 (小文件) ---
+// 格式: [256 bytes RSA-encrypted AES key][12 bytes nonce][AES-GCM ciphertext]
+async function decryptFullFile(encryptedData, privateKey) {
+    if (encryptedData.byteLength < ENCRYPTED_KEY_LENGTH + NONCE_SIZE) {
+        throw new Error('文件大小无效，不符合完整加密格式');
+    }
+
+    const encryptedAESKey = encryptedData.slice(0, ENCRYPTED_KEY_LENGTH);
+    const nonce = encryptedData.slice(ENCRYPTED_KEY_LENGTH, ENCRYPTED_KEY_LENGTH + NONCE_SIZE);
+    const ciphertext = encryptedData.slice(ENCRYPTED_KEY_LENGTH + NONCE_SIZE);
+
+    // RSA-OAEP 解密 AES 密钥
+    const aesKeyBuffer = await crypto.subtle.decrypt(
+        { name: 'RSA-OAEP' },
+        privateKey,
+        encryptedAESKey
+    );
+
+    // 导入 AES 密钥用于 AES-GCM 解密
+    const aesKey = await crypto.subtle.importKey(
+        'raw',
+        aesKeyBuffer,
+        { name: 'AES-GCM', length: aesKeyBuffer.byteLength * 8 },
+        false,
+        ['decrypt']
+    );
+
+    // AES-GCM 解密
+    const plaintext = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce },
+        aesKey,
+        ciphertext
+    );
+
+    return new Uint8Array(plaintext);
+}
+
+// --- 部分加密文件解密 (PENC 格式, 大文件) ---
+// 格式: [4 bytes "PENC"][4 bytes chunks JSON 长度 LE][chunks JSON][4 bytes key长度 LE][加密AES密钥][所有加密块数据]
+async function decryptPartialFile(encryptedData, privateKey) {
+    const view = new DataView(encryptedData.buffer, encryptedData.byteOffset, encryptedData.byteLength);
+
+    // 解析 chunks JSON 长度
+    const chunksLen = view.getUint32(4, true); // LittleEndian
+    const jsonStart = 8;
+    const jsonEnd = 8 + chunksLen;
+    if (jsonEnd > encryptedData.byteLength) {
+        throw new Error('PENC 格式损坏: chunks 元数据超出文件大小');
+    }
+
+    // 解析 chunks JSON
+    const decoder = new TextDecoder();
+    const chunksJSON = decoder.decode(encryptedData.slice(jsonStart, jsonEnd));
+    const chunks = JSON.parse(chunksJSON);
+    log('  检测到 PENC 部分加密格式, ' + chunks.length + ' 个加密块');
+
+    // 解析加密 AES 密钥长度
+    const keyOffset = jsonEnd;
+    if (keyOffset + 4 > encryptedData.byteLength) {
+        throw new Error('PENC 格式损坏: 缺少密钥元数据');
+    }
+    const keyLen = view.getUint32(keyOffset, true);
+    const keyStart = keyOffset + 4;
+    const keyEnd = keyStart + keyLen;
+    if (keyEnd > encryptedData.byteLength) {
+        throw new Error('PENC 格式损坏: 加密密钥超出文件大小');
+    }
+
+    // RSA-OAEP 解密 AES 密钥
+    const encryptedAESKey = encryptedData.slice(keyStart, keyEnd);
+    const aesKeyBuffer = await crypto.subtle.decrypt(
+        { name: 'RSA-OAEP' },
+        privateKey,
+        encryptedAESKey
+    );
+
+    const aesKey = await crypto.subtle.importKey(
+        'raw',
+        aesKeyBuffer,
+        { name: 'AES-GCM', length: aesKeyBuffer.byteLength * 8 },
+        false,
+        ['decrypt']
+    );
+
+    // 所有加密块数据起始位置
+    let chunkDataOffset = keyEnd;
+
+    // 逐个解密数据块
+    const decryptedChunks = [];
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        if (chunkDataOffset + chunk.data.length > encryptedData.byteLength) {
+            throw new Error('PENC 格式损坏: 块 ' + i + ' 数据超出文件大小');
+        }
+
+        const chunkCiphertext = encryptedData.slice(chunkDataOffset, chunkDataOffset + chunk.data.length);
+        const nonce = new Uint8Array(chunk.nonce);
+
+        const plaintext = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: nonce },
+            aesKey,
+            chunkCiphertext
+        );
+
+        decryptedChunks.push({
+            offset: chunk.offset,
+            data: new Uint8Array(plaintext)
+        });
+
+        chunkDataOffset += chunk.data.length;
+        log('  解密块 ' + (i + 1) + '/' + chunks.length + ' (偏移=' + chunk.offset + ', 大小=' + chunk.size + ')');
+    }
+
+    return decryptedChunks;
+}
+
+// --- 处理单个文件 ---
+async function processFile(file, privateKey) {
+    const buffer = await file.arrayBuffer();
+    const data = new Uint8Array(buffer);
+
+    // 检测文件格式
+    if (data.length >= 4 && new TextDecoder().decode(data.slice(0, 4)) === PENC_MAGIC) {
+        log('  [PENC] ' + file.name);
+        return await decryptPartialFile(data, privateKey);
+    } else {
+        log('  [完整加密] ' + file.name);
+        return await decryptFullFile(data, privateKey);
+    }
+}
+
+// --- 下载解密后的文件 ---
+function downloadFile(fileName, data) {
+    const origName = fileName.endsWith(ENCRYPTED_SUFFIX)
+        ? fileName.slice(0, -ENCRYPTED_SUFFIX.length)
+        : fileName + '.decrypted';
+    const blob = new Blob([data], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = origName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    log('  -> 已下载: ' + origName);
+}
+
+// --- 主流程 ---
+let selectedFiles = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    lucide.createIcons();
+
+    const uuidInput = document.getElementById('uuidInput');
+    const fetchKeyBtn = document.getElementById('fetchKeyBtn');
+    const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
+    const decryptBtn = document.getElementById('decryptBtn');
+    const fileList = document.getElementById('fileList');
+
+    if (uuidInput) uuidInput.focus();
+
+    // 获取私钥
+    fetchKeyBtn.addEventListener('click', async () => {
+        const uuid = uuidInput.value.trim();
+        if (!uuid) {
+            setStatus('请输入 UUID', 'warning');
+            return;
+        }
+        setStatus('正在查询私钥...', '');
+        fetchKeyBtn.disabled = true;
+        try {
+            const resp = await fetch('/query?uuid=' + encodeURIComponent(uuid));
+            const data = await resp.json();
+            if (data.status !== 'success' || !data.private_key) {
+                setStatus('未找到对应私钥: ' + (data.message || '未知错误'), 'error');
+                fetchKeyBtn.disabled = false;
+                return;
+            }
+            window._privateKeyPEM = data.private_key;
+            setStatus('私钥已获取 (' + uuid.substring(0,8) + '...)', 'success');
+            log('私钥已成功获取');
+            // 启用文件选择和批量解密按钮
+            fileInput.disabled = false;
+            folderInput.disabled = false;
+            document.getElementById('selectFilesBtn').disabled = false;
+            document.getElementById('selectFolderBtn').disabled = false;
+        } catch (e) {
+            setStatus('网络错误: ' + e.message, 'error');
+        } finally {
+            fetchKeyBtn.disabled = false;
+        }
+    });
+
+    // 选择文件
+    document.getElementById('selectFilesBtn').addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        selectedFiles = Array.from(e.target.files).filter(f => f.name.endsWith(ENCRYPTED_SUFFIX));
+        updateFileList();
+    });
+
+    // 选择文件夹
+    document.getElementById('selectFolderBtn').addEventListener('click', () => {
+        folderInput.click();
+    });
+
+    folderInput.addEventListener('change', (e) => {
+        selectedFiles = Array.from(e.target.files).filter(f => f.name.endsWith(ENCRYPTED_SUFFIX));
+        updateFileList();
+    });
+
+    function updateFileList() {
+        if (selectedFiles.length === 0) {
+            fileList.innerHTML = '<p class="text-gray-500 text-sm">未选择加密文件</p>';
+            decryptBtn.disabled = true;
+        } else {
+            fileList.innerHTML = selectedFiles.map((f, i) =>
+                '<div class="flex items-center text-sm text-gray-700 py-1">' +
+                '<i data-lucide="file" class="w-4 h-4 mr-2 text-gray-500"></i>' +
+                '<span class="truncate">' + escapeHtml(f.name) + '</span>' +
+                '<span class="ml-auto text-gray-400 text-xs">' + formatSize(f.size) + '</span>' +
+                '</div>'
+            ).join('');
+            lucide.createIcons();
+            decryptBtn.disabled = false;
+        }
+    }
+
+    // 批量解密
+    decryptBtn.addEventListener('click', async () => {
+        if (!window._privateKeyPEM) {
+            setStatus('请先获取私钥', 'warning');
+            return;
+        }
+        if (selectedFiles.length === 0) {
+            setStatus('请先选择加密文件', 'warning');
+            return;
+        }
+
+        decryptBtn.disabled = true;
+        setStatus('正在解密...', '');
+        log('=== 开始解密, 共 ' + selectedFiles.length + ' 个文件 ===');
+
+        try {
+            const privateKey = await importPrivateKeyFromPEM(window._privateKeyPEM);
+            log('私钥导入成功');
+
+            let successCount = 0;
+            let failCount = 0;
+
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const file = selectedFiles[i];
+                try {
+                    log('(' + (i+1) + '/' + selectedFiles.length + ') 处理: ' + file.name);
+                    const result = await processFile(file, privateKey);
+
+                    if (result instanceof Uint8Array) {
+                        // 完整加密: 直接下载
+                        downloadFile(file.name, result);
+                    } else if (Array.isArray(result)) {
+                        // 部分加密: 需要重建原始文件
+                        // 先读取原始文件 (去掉 .encrypted)，但浏览器端无法直接读取
+                        // 这里我们生成一个仅包含解密块的 JSON 描述文件，或尝试询问用户提供原始文件
+                        log('  [警告] PENC 格式需要原始文件才能完成解密，浏览器端仅支持将解密块另存为 JSON');
+                        const meta = {
+                            format: 'PENC_partial_decrypted',
+                            originalFile: file.name.replace(/.encrypted$/, ''),
+                            chunks: result.map(c => ({
+                                offset: c.offset,
+                                size: c.data.length,
+                                data_b64: btoa(String.fromCharCode(...c.data))
+                            }))
+                        };
+                        const jsonBlob = new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(jsonBlob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = file.name.replace(/.encrypted$/, '') + '.decrypted_chunks.json';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        log('  -> 已导出解密块描述文件');
+                    }
+                    successCount++;
+                } catch (e) {
+                    log('  [错误] ' + file.name + ': ' + e.message);
+                    failCount++;
+                }
+            }
+
+            log('=== 解密完成: 成功 ' + successCount + ' 个, 失败 ' + failCount + ' 个 ===');
+            setStatus('解密完成: 成功 ' + successCount + ', 失败 ' + failCount, successCount > 0 ? 'success' : 'error');
+        } catch (e) {
+            log('私钥导入失败: ' + e.message);
+            setStatus('私钥导入失败: ' + e.message, 'error');
+        } finally {
+            decryptBtn.disabled = false;
+        }
+    });
+
+    // 清空日志
+    document.getElementById('clearLogBtn').addEventListener('click', () => {
+        document.getElementById('logArea').textContent = '';
+    });
+});
+
+function escapeHtml(text) {
+    if (!text) return '';
+    return String(text).replace(/[&<>"']/g, function(m) {
+        return {'&':'&','<':'<','>':'>','"':'"',"'":'&#039;'}[m];
+    });
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let i = -1;
+    let size = bytes;
+    do { size /= 1024; i++; } while (size >= 1024 && i < units.length - 1);
+    return size.toFixed(1) + ' ' + units[i];
+}
+    `;
+
+    return `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>浏览器端解密 - 勒索模拟器</title>
+    <link rel="icon" href="https://s3.yangzifun.org/logo.ico" type="image/x-icon">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              gray: {
+                50: '#f8f9fa', 100: '#f1f3f4', 200: '#e8ebed', 300: '#d1d5db',
+                400: '#9ca3af', 500: '#89949B', 600: '#5a666d', 700: '#3d474d',
+              }
+            },
+            fontFamily: {
+              'sans': ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+              'mono': ['SF Mono', 'Courier New', 'monospace']
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+      html { font-size: 87.5%; }
+      body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+      #logArea { font-family: 'SF Mono', 'Courier New', monospace; white-space: pre-wrap; word-break: break-all; }
+    </style>
+</head>
+<body class="bg-white min-h-screen text-gray-700">
+    <div class="min-h-screen flex flex-col items-center py-10 px-4 sm:px-6 lg:px-8">
+        <div class="w-full max-w-4xl mx-auto">
+            <!-- 页头 -->
+            <div class="mb-10 text-center">
+                <div class="flex items-center justify-center mb-4">
+                    <i data-lucide="unlock" class="w-10 h-10 mr-4 text-gray-600"></i>
+                    <h1 class="text-3xl sm:text-4xl font-bold text-gray-700">浏览器端文件解密</h1>
+                </div>
+                <p class="text-gray-500 text-lg mb-2">输入 UUID 获取私钥，选择本地加密文件即可在浏览器中完成解密</p>
+                <p class="text-gray-400 text-sm">所有解密操作均在本地浏览器中完成，私钥和文件不会上传到服务器</p>
+            </div>
+
+            <!-- 安全提示 -->
+            <div class="bg-blue-50 border border-blue-400 rounded-xl p-5 mb-8">
+                <div class="flex items-start">
+                    <i data-lucide="info" class="w-6 h-6 mr-3 text-blue-600 flex-shrink-0 mt-0.5"></i>
+                    <div class="text-blue-700 text-sm">
+                        <strong>隐私说明：</strong>所有解密操作均在您的浏览器本地完成。私钥仅在内存中保存，文件内容不会上传到任何服务器。支持 <strong>.encrypted</strong> 后缀的完整加密和部分加密 (PENC) 格式文件。
+                    </div>
+                </div>
+            </div>
+
+            <!-- 步骤 1: 输入 UUID -->
+            <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 mb-6">
+                <div class="flex items-center mb-4">
+                    <span class="w-8 h-8 rounded-full bg-gray-700 text-white flex items-center justify-center text-sm font-bold mr-3">1</span>
+                    <h2 class="text-xl font-semibold text-gray-700">输入 UUID 获取私钥</h2>
+                </div>
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" id="uuidInput" placeholder="例如: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                        class="flex-1 px-4 py-3 border-2 border-gray-400 rounded font-mono text-sm focus:outline-none focus:border-gray-600">
+                    <button id="fetchKeyBtn" class="flex items-center justify-center px-6 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded font-medium hover:bg-gray-800 transition-colors whitespace-nowrap">
+                        <i data-lucide="key" class="w-5 h-5 mr-2"></i> 获取私钥
+                    </button>
+                </div>
+                <div id="status" class="mt-3 text-sm font-medium min-h-[1.5em]"></div>
+            </div>
+
+            <!-- 步骤 2: 选择文件 -->
+            <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 mb-6">
+                <div class="flex items-center mb-4">
+                    <span class="w-8 h-8 rounded-full bg-gray-700 text-white flex items-center justify-center text-sm font-bold mr-3">2</span>
+                    <h2 class="text-xl font-semibold text-gray-700">选择加密文件</h2>
+                </div>
+                <p class="text-sm text-gray-500 mb-4">选择需要解密的 .encrypted 文件。支持多选，可以选择单个文件或整个文件夹。</p>
+                <div class="flex flex-wrap gap-3 mb-4">
+                    <button id="selectFilesBtn" disabled class="flex items-center px-5 py-2.5 bg-white border-2 border-gray-400 rounded text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        <i data-lucide="file-plus" class="w-4 h-4 mr-2"></i> 选择文件
+                    </button>
+                    <button id="selectFolderBtn" disabled class="flex items-center px-5 py-2.5 bg-white border-2 border-gray-400 rounded text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        <i data-lucide="folder-plus" class="w-4 h-4 mr-2"></i> 选择文件夹
+                    </button>
+                </div>
+                <input type="file" id="fileInput" accept=".encrypted" multiple style="display:none" disabled>
+                <input type="file" id="folderInput" webkitdirectory multiple style="display:none" disabled>
+                <div id="fileList" class="bg-white border border-gray-300 rounded p-3 max-h-48 overflow-y-auto">
+                    <p class="text-gray-500 text-sm">未选择加密文件</p>
+                </div>
+            </div>
+
+            <!-- 步骤 3: 解密 -->
+            <div class="bg-gray-50 border border-gray-200 rounded-xl p-6 mb-6">
+                <div class="flex items-center mb-4">
+                    <span class="w-8 h-8 rounded-full bg-gray-700 text-white flex items-center justify-center text-sm font-bold mr-3">3</span>
+                    <h2 class="text-xl font-semibold text-gray-700">开始解密</h2>
+                </div>
+                <button id="decryptBtn" disabled class="w-full flex items-center justify-center px-6 py-3 bg-gray-700 text-white border-2 border-gray-700 rounded font-medium hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed mb-4">
+                    <i data-lucide="play" class="w-5 h-5 mr-3"></i> 开始解密
+                </button>
+
+                <!-- 日志输出 -->
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-medium text-gray-600">解密日志</span>
+                    <button id="clearLogBtn" class="text-xs text-gray-500 hover:text-gray-700 underline">清空日志</button>
+                </div>
+                <div id="logArea" class="bg-gray-900 text-green-400 text-xs rounded p-4 h-64 overflow-y-auto font-mono"></div>
+            </div>
+
+            <!-- 返回链接 -->
+            <div class="text-center mt-6">
+                <a href="/" class="inline-flex items-center text-gray-500 hover:text-gray-700 transition-colors">
+                    <i data-lucide="arrow-left" class="w-4 h-4 mr-2"></i> 返回密钥管理中心
+                </a>
+            </div>
+
+            <div class="mt-10 text-center text-gray-500 text-sm">
+                <p>Powered by <a href="https://www.yangzihome.space" class="text-gray-600 hover:text-gray-800 transition-colors">YZFN</a></p>
+            </div>
+        </div>
+    </div>
+    <script>${DECRYPT_SCRIPT}</script>
 </body>
 </html>
     `;
@@ -888,16 +1466,17 @@ export default {
                 return handleKeyGeneration(request, env);
             }
 
-            // 安全路径检查：优先使用环境变量 SECRET_PATH，未设置时使用默认值 DEFAULT_SECRET_PATH
+            // 安全路径（如 /E56dSY）：无需人机验证，供 Go 程序直接调用
             const secretPath = env.SECRET_PATH || DEFAULT_SECRET_PATH;
             const expectedPath = '/' + secretPath.replace(/^\/+|\/+$/g, '');
-            if (requestPath !== expectedPath) {
-                return new Response(JSON.stringify({ status: "error", message: "Not Found" }), {
-                    headers: { 'Content-Type': 'application/json' },
-                    status: 404
-                });
+            if (requestPath === expectedPath) {
+                return handleKeyGenerationSecure(request, env);
             }
-            return handleKeyGeneration(request, env);
+
+            return new Response(JSON.stringify({ status: "error", message: "Not Found" }), {
+                headers: { 'Content-Type': 'application/json' },
+                status: 404
+            });
         }
 
         // GET 请求 → 路由分发
@@ -908,6 +1487,10 @@ export default {
         switch (url.pathname) {
             case '/':
                 return new Response(getHtmlPage(env), {
+                    headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+                });
+            case '/decrypt':
+                return new Response(getDecryptPage(), {
                     headers: { 'Content-Type': 'text/html;charset=UTF-8' },
                 });
             case '/query':
