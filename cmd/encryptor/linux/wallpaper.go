@@ -122,7 +122,8 @@ func drawBandCentered(img *image.RGBA, text string, y, scale, pad int, fg, bg co
 }
 
 // generateRansomWallpaper 生成勒索提示壁纸 PNG（纯标准库实现，无外部依赖）
-func generateRansomWallpaper(path, uuid string) error {
+// removeOriginal 为 true 时壁纸会额外显示“源文件已被删除”的提示
+func generateRansomWallpaper(path, uuid string, removeOriginal bool) error {
 	img := image.NewRGBA(image.Rect(0, 0, wallpaperWidth, wallpaperHeight))
 
 	bg := color.RGBA{0x0F, 0x0F, 0x0F, 0xFF}
@@ -132,7 +133,7 @@ func generateRansomWallpaper(path, uuid string) error {
 
 	fillRect(img, 0, 0, wallpaperWidth, wallpaperHeight, bg)
 
-	drawCentered(img, "RANSOM SIM 3.6", 70, 5, red)
+	drawCentered(img, "RANSOM SIM "+strings.TrimPrefix(version, "v"), 70, 5, red)
 	drawBandCentered(img, "ALL YOUR FILES ARE ENCRYPTED !", 230, 6, 26, white, red)
 	drawCentered(img, "YOUR IMPORTANT FILES HAVE BEEN ENCRYPTED", 400, 3, white)
 	drawCentered(img, "THIS IS A CONTROLLED SECURITY TRAINING SIMULATION", 470, 2, gray)
@@ -140,7 +141,13 @@ func generateRansomWallpaper(path, uuid string) error {
 	drawCentered(img, "GET THE RECOVERY TOOL AND PRIVATE KEY:", 610, 2, white)
 	drawCentered(img, "HTTPS://ENCRYPT.YANGZIFUN.ORG", 660, 3, white)
 	drawCentered(img, "YOUR PERSONAL ID: "+strings.ToUpper(uuid), 740, 2, red)
-	drawCentered(img, "THIS PROGRAM DOES NOT DELETE ANY SOURCE FILE", 900, 2, gray)
+	if removeOriginal {
+		drawBandCentered(img, "SOURCE FILES HAVE BEEN DELETED !", 800, 3, 16, white, red)
+		drawCentered(img, "THIS PROGRAM HAS DELETED YOUR SOURCE FILES", 900, 2, red)
+		drawCentered(img, "ONLY ENCRYPTED COPIES REMAIN ON THIS DEVICE", 930, 2, red)
+	} else {
+		drawCentered(img, "THIS PROGRAM DOES NOT DELETE ANY SOURCE FILE", 900, 2, gray)
+	}
 	drawBandCentered(img, "CONTROLLED SIMULATION - MIT LICENSE - DEFENSE RESEARCH ONLY", 960, 2, 16, white, red)
 
 	f, err := os.Create(path)

@@ -24,20 +24,20 @@ build_encryptor() {
     cd "$CMD_DIR/encryptor/linux"
     
     # 动态链接版本
-    GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/encryptor" .
-    echo "[OK] encryptor built successfully."
+    GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/ransom_simulator_linux" .
+    echo "[OK] ransom_simulator_linux built successfully."
     
     # 静态链接版本
     echo "[2/2] Building static encryptor for Linux (amd64)..."
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/encryptor_static" .
-    echo "[OK] encryptor_static built successfully."
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/ransom_simulator_linux_static" .
+    echo "[OK] ransom_simulator_linux_static built successfully."
 }
 
 build_decryptor() {
     echo "[*] Building decryptor for Linux (amd64)..."
     cd "$CMD_DIR/decryptor"
-    GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/decryptor" .
-    echo "[OK] decryptor built successfully."
+    GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/decryptor_linux" .
+    echo "[OK] decryptor_linux built successfully."
 }
 
 case "$TARGET" in

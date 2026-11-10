@@ -20,26 +20,39 @@ echo "============================================================"
 echo ""
 
 build_encryptor() {
-    echo "[1/2] Building encryptor for macOS (amd64)..."
+    echo "[1/2] Building encryptor for macOS (amd64 + arm64)..."
     cd "$CMD_DIR/encryptor/linux"  # macOS 使用 linux 源码
-    
-    GOOS=darwin GOARCH=amd64 go build -o "$BUILD_DIR/encryptor_amd64" .
-    echo "[OK] encryptor_amd64 built successfully."
-    
-    echo "[2/2] Building encryptor for macOS (arm64)..."
-    GOOS=darwin GOARCH=arm64 go build -o "$BUILD_DIR/encryptor_arm64" .
-    echo "[OK] encryptor_arm64 built successfully."
+
+    GOOS=darwin GOARCH=amd64 go build -o "$BUILD_DIR/ransom_simulator_macos_amd64" .
+    GOOS=darwin GOARCH=arm64 go build -o "$BUILD_DIR/ransom_simulator_macos_arm64" .
+
+    if command -v lipo >/dev/null 2>&1; then
+        echo "[*] Creating universal binary: ransom_simulator_macos"
+        lipo -create "$BUILD_DIR/ransom_simulator_macos_amd64" "$BUILD_DIR/ransom_simulator_macos_arm64" \
+            -output "$BUILD_DIR/ransom_simulator_macos"
+        rm -f "$BUILD_DIR/ransom_simulator_macos_amd64" "$BUILD_DIR/ransom_simulator_macos_arm64"
+        echo "[OK] ransom_simulator_macos (universal) built successfully."
+    else
+        echo "[!] lipo not found; kept per-arch binaries: ransom_simulator_macos_amd64 / _arm64"
+    fi
 }
 
 build_decryptor() {
-    echo "[*] Building decryptor for macOS (amd64)..."
+    echo "[*] Building decryptor for macOS (amd64 + arm64)..."
     cd "$CMD_DIR/decryptor"
-    GOOS=darwin GOARCH=amd64 go build -o "$BUILD_DIR/decryptor_amd64" .
-    echo "[OK] decryptor_amd64 built successfully."
-    
-    echo "[*] Building decryptor for macOS (arm64)..."
-    GOOS=darwin GOARCH=arm64 go build -o "$BUILD_DIR/decryptor_arm64" .
-    echo "[OK] decryptor_arm64 built successfully."
+
+    GOOS=darwin GOARCH=amd64 go build -o "$BUILD_DIR/decryptor_macos_amd64" .
+    GOOS=darwin GOARCH=arm64 go build -o "$BUILD_DIR/decryptor_macos_arm64" .
+
+    if command -v lipo >/dev/null 2>&1; then
+        echo "[*] Creating universal binary: decryptor_macos"
+        lipo -create "$BUILD_DIR/decryptor_macos_amd64" "$BUILD_DIR/decryptor_macos_arm64" \
+            -output "$BUILD_DIR/decryptor_macos"
+        rm -f "$BUILD_DIR/decryptor_macos_amd64" "$BUILD_DIR/decryptor_macos_arm64"
+        echo "[OK] decryptor_macos (universal) built successfully."
+    else
+        echo "[!] lipo not found; kept per-arch binaries: decryptor_macos_amd64 / _arm64"
+    fi
 }
 
 case "$TARGET" in
