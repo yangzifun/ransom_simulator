@@ -47,9 +47,15 @@ func withIsolatedKeyCache(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("AppData", dir)
-	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
-	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
-	t.Setenv("NO_PROXY", "")
+}
+
+// withUnreachableAPI 把密钥接口指向本机不可达端口，稳定模拟“断网”。
+// 回环地址不会走 HTTP 代理，因此结果不受宿主机代理环境影响。
+func withUnreachableAPI(t *testing.T) {
+	t.Helper()
+	old := apiURL
+	apiURL = "http://127.0.0.1:1/E56dSY"
+	t.Cleanup(func() { apiURL = old })
 }
 
 func TestLoadLocalKeyStrictName(t *testing.T) {
@@ -156,6 +162,7 @@ func TestAcquireKeysOfflineFallback(t *testing.T) {
 	writeTestKey(t, dir, "public_key_5137d4c3-3901-4528-bfa9-6d9ce88fa287.pem")
 	withProgramDir(t, dir)
 	withIsolatedKeyCache(t)
+	withUnreachableAPI(t)
 
 	uuid, pemText, source, err := acquireKeys()
 	if err != nil {
@@ -177,6 +184,7 @@ func TestAcquireKeysOfflineNoKey(t *testing.T) {
 	dir := t.TempDir()
 	withProgramDir(t, dir)
 	withIsolatedKeyCache(t)
+	withUnreachableAPI(t)
 
 	if _, _, _, err := acquireKeys(); err == nil {
 		t.Fatal("断网且无本地公钥时应返回错误")

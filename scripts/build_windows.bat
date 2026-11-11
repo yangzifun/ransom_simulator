@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM Windows 构建脚本 - ransom_simulator
+REM Windows 构建脚本 - ransom_simulator（amd64 + arm64）
 REM 用法: build_windows.bat [encryptor|decryptor|all]
 REM ============================================================
 
@@ -17,9 +17,11 @@ if "%1"=="all" set TARGET=all
 
 echo.
 echo ============================================================
-echo   Ransom Simulator - Windows Build Script
+echo   Ransom Simulator - Windows Build Script (amd64 / arm64)
 echo ============================================================
 echo.
+
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 if "%TARGET%"=="all" goto :build_all
 if "%TARGET%"=="encryptor" goto :build_encryptor
@@ -31,30 +33,45 @@ call :build_decryptor
 goto :done
 
 :build_encryptor
-echo [1/2] Building encryptor for Windows...
+echo [1/2] Building encryptor for Windows (amd64 + arm64)...
 cd /d "%CMD_DIR%\encryptor\windows"
+set CGO_ENABLED=0
+set GOOS=windows
+
+set GOARCH=amd64
 go build -o "%BUILD_DIR%\ransom_simulator.exe" .
-if %ERRORLEVEL% EQU 0 (
-    echo [OK] ransom_simulator.exe built successfully.
-) else (
-    echo [FAIL] Failed to build ransom_simulator.exe
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto :build_fail
+
+set GOARCH=arm64
+go build -o "%BUILD_DIR%\ransom_simulator_arm64.exe" .
+if errorlevel 1 goto :build_fail
+
+set GOARCH=
+echo [OK] ransom_simulator.exe / ransom_simulator_arm64.exe built successfully.
 goto :eof
 
 :build_decryptor
-echo [2/2] Building decryptor for Windows...
+echo [2/2] Building decryptor for Windows (amd64 + arm64)...
 cd /d "%CMD_DIR%\decryptor"
+set CGO_ENABLED=0
+set GOOS=windows
+
+set GOARCH=amd64
 go build -o "%BUILD_DIR%\decryptor.exe" .
-if %ERRORLEVEL% EQU 0 (
-    echo [OK] decryptor.exe built successfully.
-) else (
-    echo [FAIL] Failed to build decryptor.exe
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto :build_fail
+
+set GOARCH=arm64
+go build -o "%BUILD_DIR%\decryptor_arm64.exe" .
+if errorlevel 1 goto :build_fail
+
+set GOARCH=
+echo [OK] decryptor.exe / decryptor_arm64.exe built successfully.
 goto :eof
+
+:build_fail
+echo [FAIL] Build failed (GOARCH=%GOARCH%).
+pause
+exit /b 1
 
 :done
 echo.

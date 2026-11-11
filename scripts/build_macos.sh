@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# macOS 构建脚本 - ransom_simulator
+# macOS 构建脚本 - ransom_simulator（amd64 + arm64 + 通用二进制）
 # 用法: ./build_macos.sh [encryptor|decryptor|all]
 # ============================================================
 
@@ -15,7 +15,7 @@ TARGET="${1:-all}"
 
 echo ""
 echo "============================================================"
-echo "  Ransom Simulator - macOS Build Script"
+echo "  Ransom Simulator - macOS Build Script (amd64 / arm64 / universal)"
 echo "============================================================"
 echo ""
 
@@ -30,8 +30,8 @@ build_encryptor() {
         echo "[*] Creating universal binary: ransom_simulator_macos"
         lipo -create "$BUILD_DIR/ransom_simulator_macos_amd64" "$BUILD_DIR/ransom_simulator_macos_arm64" \
             -output "$BUILD_DIR/ransom_simulator_macos"
-        rm -f "$BUILD_DIR/ransom_simulator_macos_amd64" "$BUILD_DIR/ransom_simulator_macos_arm64"
-        echo "[OK] ransom_simulator_macos (universal) built successfully."
+        rm -f "$BUILD_DIR/ransom_simulator_macos_amd64"
+        echo "[OK] ransom_simulator_macos (universal) + ransom_simulator_macos_arm64"
     else
         echo "[!] lipo not found; kept per-arch binaries: ransom_simulator_macos_amd64 / _arm64"
     fi
@@ -48,8 +48,8 @@ build_decryptor() {
         echo "[*] Creating universal binary: decryptor_macos"
         lipo -create "$BUILD_DIR/decryptor_macos_amd64" "$BUILD_DIR/decryptor_macos_arm64" \
             -output "$BUILD_DIR/decryptor_macos"
-        rm -f "$BUILD_DIR/decryptor_macos_amd64" "$BUILD_DIR/decryptor_macos_arm64"
-        echo "[OK] decryptor_macos (universal) built successfully."
+        rm -f "$BUILD_DIR/decryptor_macos_amd64"
+        echo "[OK] decryptor_macos (universal) + decryptor_macos_arm64"
     else
         echo "[!] lipo not found; kept per-arch binaries: decryptor_macos_amd64 / _arm64"
     fi

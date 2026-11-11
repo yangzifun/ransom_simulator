@@ -19,7 +19,139 @@ import (
 const (
 	defaultScheduleTaskName = "RansomSimTask"
 	scheduledRunMarker      = "--scheduled-run"
+	daemonChildMarker       = "--daemon-child"
+	daemonLogFileName       = "scheduler.log"
+	doneMarkerPrefix        = ".schedule_done_"
 )
+
+// isDaemonChild 判断当前进程是否为自动转入后台的子进程
+func isDaemonChild() bool {
+	for _, arg := range os.Args[1:] {
+		if arg == daemonChildMarker || arg == "-"+strings.TrimLeft(daemonChildMarker, "-") {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduleTaskNameOf 返回清洗后的任务名（用于自启项与状态文件名）
+func scheduleTaskNameOf(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		name = defaultScheduleTaskName
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return defaultScheduleTaskName
+	}
+	return b.String()
+}
+
+// scheduleLogPath 后台子进程日志路径（程序目录）
+func scheduleLogPath() string {
+	return filepath.Join(programDir, daemonLogFileName)
+}
+
+// buildDaemonArgs 构造后台子进程参数：去掉原定时参数，改为绝对时间 + 子进程标记
+func buildDaemonArgs(target time.Time) []string {
+	args := stripScheduleFlags(os.Args[1:])
+	out := make([]string, 0, len(args)+3)
+	for _, a := range args {
+		if a == scheduledRunMarker || a == daemonChildMarker {
+			continue
+		}
+		out = append(out, a)
+	}
+	out = append(out, "--at", target.Format(time.RFC3339), daemonChildMarker)
+	return out
+}
+
+// 定时任务完成标记，避免重启后重复执行
+func doneMarkerPath(opt *options) string {
+	return filepath.Join(programDir, doneMarkerPrefix+scheduleTaskNameOf(opt.scheduleTaskName))
+}
+
+func clearScheduleDone(opt *options) { _ = os.Remove(doneMarkerPath(opt)) }
+
+func markScheduleDone(opt *options) {
+	_ = os.WriteFile(doneMarkerPath(opt), []byte(time.Now().Format(time.RFC3339)+"\n"), 0600)
+}
+
+func isScheduleDone(opt *options) bool {
+	_, err := os.Stat(doneMarkerPath(opt))
+	return err == nil
+}
+
+// autoStartMarker crontab 行尾标记，用于识别/清理开机自启
+func autoStartMarker(taskName string) string {
+	return "# " + scheduleTaskNameOf(taskName) + "-autostart"
+}
+
+// registerAutoStart 通过 crontab @reboot 注册开机自启（重启后自动拉起后台等待进程）
+func registerAutoStart(opt *options, target time.Time) error {
+	tool := resolveToolPath("crontab")
+	if tool == "" {
+		return fmt.Errorf("未找到 crontab，无法注册开机自启")
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("无法获取程序路径: %w", err)
+	}
+	exePath, _ = filepath.Abs(exePath)
+
+	args := buildDaemonArgs(target)
+	line := fmt.Sprintf("@reboot %s %s >> %s 2>&1 %s",
+		shellQuote(exePath),
+		strings.Join(quoteAll(args), " "),
+		shellQuote(scheduleLogPath()),
+		autoStartMarker(opt.scheduleTaskName))
+
+	existing, _ := exec.Command(tool, "-l").Output()
+	var kept []string
+	for _, l := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(l) == "" || strings.Contains(l, autoStartMarker(opt.scheduleTaskName)) {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	kept = append(kept, line)
+
+	install := exec.Command(tool, "-")
+	install.Stdin = strings.NewReader(strings.Join(kept, "\n") + "\n")
+	if out, runErr := install.CombinedOutput(); runErr != nil {
+		return fmt.Errorf("写入 crontab 失败: %v (%s)", runErr, strings.TrimSpace(string(out)))
+	}
+	if logEnabled {
+		logOperation("已注册开机自启 crontab: " + line)
+	}
+	return nil
+}
+
+// removeAutoStart 删除 crontab 中的开机自启行
+func removeAutoStart(taskName string) {
+	tool := resolveToolPath("crontab")
+	if tool == "" {
+		return
+	}
+	existing, _ := exec.Command(tool, "-l").Output()
+	var kept []string
+	for _, l := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(l) == "" || strings.Contains(l, autoStartMarker(taskName)) {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	install := exec.Command(tool, "-")
+	install.Stdin = strings.NewReader(strings.Join(kept, "\n") + "\n")
+	_, _ = install.CombinedOutput()
+}
 
 // resolveToolPath 解析系统工具路径（不存在返回空串）
 func resolveToolPath(name string) string {
@@ -187,8 +319,11 @@ func stripScheduleFlags(args []string) []string {
 	}
 	dropAlone := map[string]bool{
 		scheduledRunMarker: true,
+		daemonChildMarker:  true,
 		"--persist-schedule": true, "-persist-schedule": true,
 		"--schedule-cleanup": true, "-schedule-cleanup": true,
+		"--foreground": true, "-foreground": true,
+		"--no-autostart": true, "-no-autostart": true,
 	}
 
 	var out []string
@@ -327,11 +462,13 @@ func registerPersistentSchedule(opt *options, target time.Time) error {
 	return fmt.Errorf("未找到可用的调度工具 (systemd-run / at / crontab)")
 }
 
-// cleanupPersistentSchedule 清理系统级定时任务
+// cleanupPersistentSchedule 清理系统级定时任务与开机自启
 func cleanupPersistentSchedule(taskName string) {
 	if strings.TrimSpace(taskName) == "" {
 		taskName = defaultScheduleTaskName
 	}
+
+	removeAutoStart(taskName)
 
 	if tool := resolveToolPath("systemctl"); tool != "" {
 		_ = exec.Command(tool, "stop", taskName+".timer").Run()

